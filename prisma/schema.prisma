@@ -1,0 +1,180 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?
+  
+  // Whoop Integration
+  whoopAccessToken  String?
+  whoopRefreshToken String?
+  whoopUserId       String?
+  
+  // Google Calendar Integration
+  googleAccessToken  String?
+  googleRefreshToken String?
+  googleCalendarId   String?
+  
+  // User Profile
+  height        Float?    // in inches
+  weight        Float?    // in lbs
+  raceDate      DateTime?
+  injuryNotes   String?
+  
+  // Notification Preferences
+  pushSubscription  String?  // JSON for web push
+  notifyWorkouts    Boolean  @default(true)
+  notifyRecovery    Boolean  @default(true)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  accounts      Account[]
+  sessions      Session[]
+  workouts      Workout[]
+  whoopData     WhoopData[]
+  notifications Notification[]
+}
+
+model Account {
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String?
+  access_token      String?
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String?
+  session_state     String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@id([provider, providerAccountId])
+}
+
+model Session {
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model VerificationToken {
+  identifier String
+  token      String
+  expires    DateTime
+  
+  @@id([identifier, token])
+}
+
+model Workout {
+  id          String   @id @default(cuid())
+  userId      String
+  
+  // Workout Details
+  title       String
+  description String?
+  type        String   // swim, bike, run, lift_upper, lift_lower, brick, rest
+  phase       String   // rebuild, build, peak
+  week        Int
+  dayOfWeek   Int      // 0-6, Monday = 0
+  
+  // Duration & Intensity
+  plannedDuration  Int?     // in minutes
+  actualDuration   Int?
+  plannedIntensity String?  // easy, moderate, hard, race_pace
+  actualIntensity  String?
+  
+  // Exercise Details (JSON for flexibility)
+  exercises   String?  // JSON array of exercises
+  notes       String?
+  
+  // Scheduling
+  scheduledDate DateTime
+  completedAt   DateTime?
+  status        String   @default("scheduled") // scheduled, completed, skipped, adjusted
+  
+  // Whoop-based adjustments
+  originalWorkout String?  // Store original if recalibrated
+  wasRecalibrated Boolean  @default(false)
+  recalibrationReason String?
+  
+  // Calendar sync
+  googleEventId String?
+  
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, scheduledDate])
+  @@index([userId, status])
+}
+
+model WhoopData {
+  id       String   @id @default(cuid())
+  userId   String
+  
+  date     DateTime
+  
+  // Recovery Data
+  recoveryScore     Float?   // 0-100
+  hrvRmssd          Float?
+  restingHeartRate  Float?
+  sleepPerformance  Float?
+  
+  // Strain Data
+  dayStrain         Float?   // 0-21
+  averageHeartRate  Float?
+  maxHeartRate      Float?
+  calories          Float?
+  
+  // Sleep Data
+  sleepDuration     Int?     // in minutes
+  sleepEfficiency   Float?
+  sleepConsistency  Float?
+  
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@unique([userId, date])
+  @@index([userId, date])
+}
+
+model Notification {
+  id       String   @id @default(cuid())
+  userId   String
+  
+  title    String
+  body     String
+  type     String   // workout_reminder, recovery_alert, weekly_summary
+  data     String?  // JSON for additional data
+  
+  sentAt   DateTime?
+  readAt   DateTime?
+  
+  createdAt DateTime @default(now())
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@index([userId, createdAt])
+}
