@@ -119,12 +119,12 @@ export default function WorkoutsPage() {
                   flex items-center gap-2 px-4 py-3 rounded-xl whitespace-nowrap transition-all
                   ${
                     filter === type
-                      ? "bg-[var(--bg-tertiary)] ring-2"
+                      ? "bg-[var(--bg-tertiary)]"
                       : "bg-[var(--bg-secondary)] hover:bg-[var(--bg-tertiary)]"
                   }
                 `}
                 style={{
-                  ringColor: filter === type ? color : "transparent",
+                  boxShadow: filter === type ? `0 0 0 2px ${color}` : "none",
                 }}
               >
                 <Icon className="w-4 h-4" style={{ color }} />
