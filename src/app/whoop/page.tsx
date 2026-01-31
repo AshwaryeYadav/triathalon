@@ -38,13 +38,22 @@ interface WhoopData {
     consistency?: number
   }
   lastUpdated: string
+  hasData?: boolean
+  _debug?: {
+    hasRecovery: boolean
+    hasCycle: boolean
+    hasSleep: boolean
+    rawRecoveryScore: number | null
+    rawHrv: number | null
+    rawRestingHR: number | null
+  }
 }
 
 interface WhoopResponse {
   connected: boolean
   demo: boolean
   cached?: boolean
-  data: WhoopData
+  data: WhoopData & { _debug?: WhoopData["_debug"] }
   message?: string
   lastSync?: string
 }
@@ -310,6 +319,23 @@ export default function WhoopPage() {
         {error && (
           <div className="mb-6 p-4 rounded-xl bg-red-500/10 border border-red-500/30">
             <p className="text-sm text-red-400">{error}</p>
+          </div>
+        )}
+
+        {/* Debug Info */}
+        {response?.data?._debug && (
+          <div className="mb-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/30">
+            <p className="text-sm font-medium text-blue-400 mb-2">🔍 Debug Info</p>
+            <div className="text-xs text-blue-400/80 font-mono space-y-1">
+              <div>Connected: {isConnected ? "Yes" : "No"}</div>
+              <div>Demo Mode: {isDemo ? "Yes" : "No"}</div>
+              <div>Has Recovery Data: {response.data._debug.hasRecovery ? "Yes" : "No"}</div>
+              <div>Has Cycle Data: {response.data._debug.hasCycle ? "Yes" : "No"}</div>
+              <div>Has Sleep Data: {response.data._debug.hasSleep ? "Yes" : "No"}</div>
+              <div>Raw Recovery Score: {response.data._debug.rawRecoveryScore ?? "null"}</div>
+              <div>Raw HRV: {response.data._debug.rawHrv ?? "null"}</div>
+              <div>Raw Resting HR: {response.data._debug.rawRestingHR ?? "null"}</div>
+            </div>
           </div>
         )}
 
