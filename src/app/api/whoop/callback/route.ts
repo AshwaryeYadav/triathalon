@@ -14,11 +14,20 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams
     const code = searchParams.get("code")
     const error = searchParams.get("error")
+    const state = searchParams.get("state")
+
+    // Verify state matches user ID
+    if (state && state !== session.user.id) {
+      console.error("State mismatch in Whoop callback")
+      return NextResponse.redirect(
+        new URL("/settings?error=invalid_state", request.url)
+      )
+    }
 
     if (error) {
       console.error("Whoop OAuth error:", error)
       return NextResponse.redirect(
-        new URL("/settings?error=whoop_auth_failed", request.url)
+        new URL(`/settings?error=whoop_${error}`, request.url)
       )
     }
 
@@ -29,23 +38,34 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange code for tokens
-    const redirectUri = `${process.env.NEXTAUTH_URL}/api/whoop/callback`
-    const tokens = await exchangeWhoopCode(code, redirectUri)
+    const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000"
+    const redirectUri = `${baseUrl}/api/whoop/callback`
 
-    // Get user profile
-    const profile = await getWhoopProfile(tokens.accessToken)
+    try {
+      const tokens = await exchangeWhoopCode(code, redirectUri)
 
-    // Save tokens to user
-    await prisma.user.update({
-      where: { id: session.user.id },
-      data: {
-        whoopAccessToken: tokens.accessToken,
-        whoopRefreshToken: tokens.refreshToken,
-        whoopUserId: String(profile.user_id),
-      },
-    })
+      // Get user profile from Whoop
+      const profile = await getWhoopProfile(tokens.accessToken)
 
-    return NextResponse.redirect(new URL("/whoop?connected=true", request.url))
+      // Save tokens to user
+      await prisma.user.update({
+        where: { id: session.user.id },
+        data: {
+          whoopAccessToken: tokens.accessToken,
+          whoopRefreshToken: tokens.refreshToken,
+          whoopUserId: String(profile.user_id),
+        },
+      })
+
+      return NextResponse.redirect(
+        new URL("/whoop?connected=true", request.url)
+      )
+    } catch (tokenError) {
+      console.error("Error exchanging Whoop code:", tokenError)
+      return NextResponse.redirect(
+        new URL("/settings?error=whoop_token_failed", request.url)
+      )
+    }
   } catch (error) {
     console.error("Error in Whoop callback:", error)
     return NextResponse.redirect(
