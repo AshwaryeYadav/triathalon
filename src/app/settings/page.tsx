@@ -86,15 +86,30 @@ export default function SettingsPage() {
     setIsSaving(false)
   }
 
+  const [whoopError, setWhoopError] = useState<string | null>(null)
+  
   const connectWhoop = async () => {
+    setWhoopError(null)
     try {
       const res = await fetch("/api/whoop/connect")
       const data = await res.json()
+      
+      console.log("Whoop connect response:", data)
+      
       if (data.authUrl) {
         window.location.href = data.authUrl
+      } else if (data.error) {
+        if (data.error === "Unauthorized") {
+          setWhoopError("Please sign in first")
+        } else if (data.error === "Whoop API not configured") {
+          setWhoopError("Add WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET to Vercel, then redeploy")
+        } else {
+          setWhoopError(data.error)
+        }
       }
     } catch (error) {
       console.error("Failed to connect Whoop:", error)
+      setWhoopError("Connection failed")
     }
   }
 
@@ -258,6 +273,11 @@ export default function SettingsPage() {
                   )}
                 </div>
               </div>
+              {whoopError && (
+                <div className="mt-3 text-sm p-3 rounded-lg bg-red-500/10 text-red-400">
+                  ⚠️ {whoopError}
+                </div>
+              )}
             </div>
 
             {/* Google Calendar Integration */}

@@ -113,17 +113,31 @@ export default function WhoopPage() {
 
   const connectWhoop = async () => {
     setIsConnecting(true)
+    setError(null)
+    
     try {
       const res = await fetch("/api/whoop/connect")
       const data = await res.json()
 
+      console.log("Whoop connect response:", data)
+
       if (data.authUrl) {
+        // Redirect to Whoop OAuth
         window.location.href = data.authUrl
       } else if (data.error) {
-        setError(data.error)
+        if (data.error === "Unauthorized") {
+          setError("Please sign in first to connect Whoop. Go to /login")
+        } else if (data.error === "Whoop API not configured") {
+          setError("Whoop API credentials not set. Add WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET to Vercel environment variables, then redeploy.")
+        } else {
+          setError(data.error)
+        }
+      } else {
+        setError("Unexpected response from server")
       }
     } catch (err) {
-      setError("Failed to connect to Whoop")
+      console.error("Whoop connect error:", err)
+      setError("Failed to connect to Whoop. Check console for details.")
     } finally {
       setIsConnecting(false)
     }
