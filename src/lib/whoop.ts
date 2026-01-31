@@ -1,6 +1,7 @@
 // Whoop API Integration
 // Documentation: https://developer.whoop.com/
 
+// Whoop API endpoints (v1)
 const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
 const WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
@@ -215,21 +216,24 @@ export async function getWhoopRecovery(
     params.append("end", endDate.toISOString())
   }
 
-  const response = await fetch(
-    `${WHOOP_API_BASE}/recovery?${params.toString()}`,
-    {
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-      },
-    }
-  )
+  const url = `${WHOOP_API_BASE}/recovery?${params.toString()}`
+  console.log("Fetching Whoop recovery from:", url)
+  
+  const response = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+    },
+  })
 
   if (!response.ok) {
-    throw new Error(`Failed to fetch Whoop recovery: ${response.statusText}`)
+    const errorText = await response.text()
+    console.error("Whoop recovery error:", response.status, errorText)
+    throw new Error(`Failed to fetch Whoop recovery: ${response.status} ${response.statusText}`)
   }
 
   const data = await response.json()
-  return data.records || []
+  console.log("Whoop recovery response:", JSON.stringify(data).slice(0, 200))
+  return data.records || data || []
 }
 
 // Fetch latest recovery score
