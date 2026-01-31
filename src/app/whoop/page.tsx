@@ -57,6 +57,22 @@ export default function WhoopPage() {
   const [error, setError] = useState<string | null>(null)
   const [historicalData, setHistoricalData] = useState<WhoopData[]>([])
 
+  // Check for URL params on mount
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    const urlError = params.get("error")
+    const urlMessage = params.get("message")
+    const connected = params.get("connected")
+    
+    if (urlError) {
+      setError(`Whoop error: ${urlError}${urlMessage ? ` - ${urlMessage}` : ''}`)
+    }
+    if (connected === "true") {
+      // Clear URL params
+      window.history.replaceState({}, '', '/whoop')
+    }
+  }, [])
+
   const fetchWhoopData = useCallback(async () => {
     try {
       const res = await fetch("/api/whoop")
@@ -67,7 +83,12 @@ export default function WhoopPage() {
       }
 
       setResponse(data)
-      setError(null)
+      if (data.message && data.demo) {
+        // Show message but don't treat as error if it's just demo mode
+        console.log("Whoop status:", data.message)
+      } else {
+        setError(null)
+      }
 
       // Generate mock historical data for demo mode
       if (data.demo) {
