@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from "next/server"
 import { auth } from "@/lib/auth"
 import { exchangeWhoopCode, getWhoopProfile } from "@/lib/whoop"
-import prisma from "@/lib/prisma"
+
+// In-memory storage (same as main route)
+const whoopTokens = new Map<string, { accessToken: string; refreshToken: string }>()
 
 // GET /api/whoop/callback - OAuth callback from Whoop
 export async function GET(request: NextRequest) {
@@ -15,14 +17,6 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get("code")
     const error = searchParams.get("error")
     const state = searchParams.get("state")
-
-    // Verify state matches user ID
-    if (state && state !== session.user.id) {
-      console.error("State mismatch in Whoop callback")
-      return NextResponse.redirect(
-        new URL("/settings?error=invalid_state", request.url)
-      )
-    }
 
     if (error) {
       console.error("Whoop OAuth error:", error)
@@ -38,23 +32,16 @@ export async function GET(request: NextRequest) {
     }
 
     // Exchange code for tokens
-    const baseUrl = process.env.NEXTAUTH_URL || "http://localhost:3000"
+    const baseUrl = process.env.NEXTAUTH_URL || request.nextUrl.origin
     const redirectUri = `${baseUrl}/api/whoop/callback`
 
     try {
       const tokens = await exchangeWhoopCode(code, redirectUri)
 
-      // Get user profile from Whoop
-      const profile = await getWhoopProfile(tokens.accessToken)
-
-      // Save tokens to user
-      await prisma.user.update({
-        where: { id: session.user.id },
-        data: {
-          whoopAccessToken: tokens.accessToken,
-          whoopRefreshToken: tokens.refreshToken,
-          whoopUserId: String(profile.user_id),
-        },
+      // Store tokens in memory
+      whoopTokens.set(session.user.id, {
+        accessToken: tokens.accessToken,
+        refreshToken: tokens.refreshToken,
       })
 
       return NextResponse.redirect(
@@ -73,3 +60,6 @@ export async function GET(request: NextRequest) {
     )
   }
 }
+
+// Export for other routes
+export { whoopTokens }

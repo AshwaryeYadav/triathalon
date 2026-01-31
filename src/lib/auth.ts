@@ -1,11 +1,8 @@
 import NextAuth from "next-auth"
-import { PrismaAdapter } from "@auth/prisma-adapter"
 import Google from "next-auth/providers/google"
 import Credentials from "next-auth/providers/credentials"
-import prisma from "./prisma"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
-  adapter: PrismaAdapter(prisma),
   providers: [
     Google({
       clientId: process.env.GOOGLE_CLIENT_ID,
@@ -24,36 +21,30 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
       },
       async authorize(credentials) {
-        // Demo mode - create or find user
+        // Demo mode - create a fake user without database
         const email = credentials?.email as string
         if (!email) return null
-        
-        let user = await prisma.user.findUnique({ where: { email } })
-        
-        if (!user) {
-          user = await prisma.user.create({
-            data: {
-              email,
-              name: "Triathlete",
-              height: 74, // 6'2"
-              weight: 205,
-              raceDate: new Date("2026-04-11"),
-              injuryNotes: "Lisfranc injury - limit running volume",
-            },
-          })
+
+        // Return a demo user object
+        return {
+          id: `demo-${email.replace(/[^a-zA-Z0-9]/g, "-")}`,
+          email,
+          name: "Triathlete",
+          image: null,
         }
-        
-        return user
       },
     }),
   ],
   session: {
     strategy: "jwt",
+    maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   callbacks: {
     async jwt({ token, user, account }) {
       if (user) {
         token.id = user.id
+        token.email = user.email
+        token.name = user.name
       }
       if (account?.provider === "google") {
         token.googleAccessToken = account.access_token
@@ -64,6 +55,10 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string
+        // Add google tokens to session for calendar API
+        if (token.googleAccessToken) {
+          (session as any).googleAccessToken = token.googleAccessToken
+        }
       }
       return session
     },
@@ -71,4 +66,5 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   pages: {
     signIn: "/login",
   },
+  trustHost: true,
 })
