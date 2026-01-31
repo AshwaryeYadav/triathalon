@@ -22,6 +22,10 @@ import {
   StatsCard,
   PhaseProgress,
   WorkoutModal,
+  LogWorkoutModal,
+  NextWorkoutCard,
+  calculateWorkoutAdjustment,
+  type LoggedWorkout,
 } from "@/components"
 import {
   getPhaseByWeek,
@@ -67,6 +71,9 @@ export default function Dashboard() {
   const [isRefreshing, setIsRefreshing] = useState(false)
   const [completedWorkouts, setCompletedWorkouts] = useState<Set<string>>(new Set())
   const [showAddWorkout, setShowAddWorkout] = useState(false)
+  const [showLogWorkout, setShowLogWorkout] = useState(false)
+  const [loggedWorkouts, setLoggedWorkouts] = useState<LoggedWorkout[]>([])
+  const [lastLoggedWorkout, setLastLoggedWorkout] = useState<LoggedWorkout | null>(null)
 
   // Calculate current week (from Jan 30, 2026 to April 11, 2026 = ~10 weeks)
   const raceDate = new Date("2026-04-11")
@@ -112,6 +119,37 @@ export default function Dashboard() {
     const interval = setInterval(fetchWhoopData, 5 * 60 * 1000)
     return () => clearInterval(interval)
   }, [fetchWhoopData])
+
+  // Load logged workouts from localStorage
+  useEffect(() => {
+    const savedLogged = localStorage.getItem("loggedWorkouts")
+    if (savedLogged) {
+      const parsed = JSON.parse(savedLogged) as LoggedWorkout[]
+      setLoggedWorkouts(parsed)
+      // Get most recent workout logged today
+      const todayStr = new Date().toDateString()
+      const todayLogged = parsed.filter(
+        (w) => new Date(w.timestamp).toDateString() === todayStr
+      )
+      if (todayLogged.length > 0) {
+        setLastLoggedWorkout(todayLogged[todayLogged.length - 1])
+      }
+    }
+    const completed = localStorage.getItem("completedWorkouts")
+    if (completed) setCompletedWorkouts(new Set(JSON.parse(completed)))
+  }, [])
+
+  const handleLogWorkout = (workout: LoggedWorkout) => {
+    const newLogged = [...loggedWorkouts, workout]
+    setLoggedWorkouts(newLogged)
+    setLastLoggedWorkout(workout)
+    localStorage.setItem("loggedWorkouts", JSON.stringify(newLogged))
+    
+    // Also mark as completed
+    const newCompleted = new Set([...completedWorkouts, workout.title])
+    setCompletedWorkouts(newCompleted)
+    localStorage.setItem("completedWorkouts", JSON.stringify([...newCompleted]))
+  }
 
   const refreshWhoopData = async () => {
     setIsRefreshing(true)
@@ -356,6 +394,66 @@ export default function Dashboard() {
                 </div>
               </motion.div>
 
+              {/* Log Workout Button */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.18 }}
+              >
+                <button
+                  onClick={() => setShowLogWorkout(true)}
+                  className="w-full glass-card p-4 flex items-center justify-between hover:bg-[var(--bg-card-hover)] transition-colors group"
+                >
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 rounded-xl bg-[var(--run-green)]/20">
+                      <CheckCircle className="w-5 h-5 text-[var(--run-green)]" />
+                    </div>
+                    <div className="text-left">
+                      <div className="font-medium text-white">Log a Workout</div>
+                      <div className="text-xs text-[var(--text-muted)]">
+                        Record what you just did to recalibrate your next workout
+                      </div>
+                    </div>
+                  </div>
+                  <ChevronRight className="w-5 h-5 text-[var(--text-muted)] group-hover:text-white transition-colors" />
+                </button>
+              </motion.div>
+
+              {/* Next Workout Preview (with recalibration) */}
+              {(() => {
+                // Find next incomplete workout
+                const allTodayWorkouts = todaySchedule?.workouts || []
+                const incompleteWorkouts = allTodayWorkouts.filter(
+                  (w) => !completedWorkouts.has(w.title)
+                )
+                const nextWorkout = incompleteWorkouts[0]
+
+                if (nextWorkout) {
+                  const { adjustedWorkout, reason, adjustmentType } = calculateWorkoutAdjustment(
+                    nextWorkout,
+                    lastLoggedWorkout,
+                    recoveryScore
+                  )
+
+                  return (
+                    <motion.div
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ delay: 0.19 }}
+                    >
+                      <NextWorkoutCard
+                        originalWorkout={nextWorkout}
+                        adjustedWorkout={adjustedWorkout}
+                        reason={reason}
+                        adjustmentType={adjustmentType}
+                        lastLoggedWorkout={lastLoggedWorkout}
+                      />
+                    </motion.div>
+                  )
+                }
+                return null
+              })()}
+
               {/* Today's Workouts */}
               <motion.div
                 initial={{ opacity: 0, y: 20 }}
@@ -371,6 +469,7 @@ export default function Dashboard() {
                     <button
                       onClick={() => setShowAddWorkout(true)}
                       className="p-2 rounded-lg bg-[var(--bg-tertiary)] hover:bg-[var(--bg-card-hover)] transition-colors"
+                      title="Add custom workout"
                     >
                       <Plus className="w-4 h-4 text-[var(--swim-blue)]" />
                     </button>
@@ -378,7 +477,11 @@ export default function Dashboard() {
                 </div>
                 <div className="grid gap-4">
                   {todaySchedule?.workouts.map((workout, index) => {
-                    const adjustedWorkout = getAdjustedWorkout(workout)
+                    const { adjustedWorkout } = calculateWorkoutAdjustment(
+                      workout,
+                      lastLoggedWorkout,
+                      recoveryScore
+                    )
                     const isCompleted = completedWorkouts.has(workout.title)
 
                     return (
@@ -386,7 +489,7 @@ export default function Dashboard() {
                         key={index}
                         workout={adjustedWorkout}
                         delay={index}
-                        recoveryAdjusted={recoveryScore < 67}
+                        recoveryAdjusted={adjustedWorkout.duration !== workout.duration || adjustedWorkout.intensity !== workout.intensity}
                         status={isCompleted ? "completed" : "scheduled"}
                         onClick={() => handleWorkoutClick(adjustedWorkout)}
                       />
@@ -526,6 +629,24 @@ export default function Dashboard() {
           }}
         />
       )}
+
+      {/* Log Workout Modal */}
+      <LogWorkoutModal
+        isOpen={showLogWorkout}
+        onClose={() => setShowLogWorkout(false)}
+        onLog={handleLogWorkout}
+        suggestedWorkout={
+          todaySchedule?.workouts.find((w) => !completedWorkouts.has(w.title))
+            ? {
+                title: todaySchedule.workouts.find((w) => !completedWorkouts.has(w.title))!.title,
+                type: todaySchedule.workouts.find((w) => !completedWorkouts.has(w.title))!.type,
+                duration: todaySchedule.workouts.find((w) => !completedWorkouts.has(w.title))!.duration,
+                intensity: todaySchedule.workouts.find((w) => !completedWorkouts.has(w.title))!.intensity,
+              }
+            : undefined
+        }
+        currentStrain={whoopData?.strain.dayStrain || 0}
+      />
     </div>
   )
 }
