@@ -328,20 +328,31 @@ export async function getTodaysWhoopData(accessToken: string) {
   let cycleData: WhoopCycle[] = []
   let sleepData: WhoopSleep[] = []
 
+  // Get date range for last 3 days to ensure we capture recent data
+  const endDate = new Date()
+  const startDate = new Date()
+  startDate.setDate(startDate.getDate() - 3)
+
   try {
-    recoveryData = await getLatestRecovery(accessToken)
+    // Fetch more records to find the most recent one
+    const recoveries = await getWhoopRecovery(accessToken, startDate, endDate, 5)
+    recoveryData = recoveries[0] || null
+    console.log(`Found ${recoveries.length} recovery records`)
   } catch (e: any) {
     console.log("Could not fetch recovery:", e.message)
   }
 
   try {
+    // Get latest cycle - don't filter by date since current cycle might not have end date
     cycleData = await getWhoopCycles(accessToken, undefined, undefined, 1)
   } catch (e: any) {
     console.log("Could not fetch cycles:", e.message)
   }
 
   try {
-    sleepData = await getWhoopSleep(accessToken, undefined, undefined, 1)
+    // Fetch recent sleep data
+    sleepData = await getWhoopSleep(accessToken, startDate, endDate, 5)
+    console.log(`Found ${sleepData.length} sleep records`)
   } catch (e: any) {
     console.log("Could not fetch sleep:", e.message)
   }
@@ -403,9 +414,11 @@ export async function getTodaysWhoopData(accessToken: string) {
       hasRecovery: !!recovery,
       hasCycle: !!cycle,
       hasSleep: !!sleep,
-      rawRecoveryScore: recovery?.recovery_score,
-      rawHrv: recovery?.hrv_rmssd_milli,
-      rawRestingHR: recovery?.resting_heart_rate,
+      rawRecoveryScore: recovery?.recovery_score ?? null,
+      rawHrv: recovery?.hrv_rmssd_milli ?? null,
+      rawRestingHR: recovery?.resting_heart_rate ?? null,
+      recoveryScoreState: recoveryData?.score_state ?? null,
+      sleepScoreState: sleepData[0]?.score_state ?? null,
     }
   }
 

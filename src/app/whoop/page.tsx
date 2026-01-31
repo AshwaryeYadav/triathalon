@@ -335,6 +335,12 @@ export default function WhoopPage() {
               <div>Raw Recovery Score: {response.data._debug.rawRecoveryScore ?? "null"}</div>
               <div>Raw HRV: {response.data._debug.rawHrv ?? "null"}</div>
               <div>Raw Resting HR: {response.data._debug.rawRestingHR ?? "null"}</div>
+              {(response.data._debug as any).recoveryScoreState && (
+                <div>Recovery State: {(response.data._debug as any).recoveryScoreState}</div>
+              )}
+              {(response.data._debug as any).sleepScoreState && (
+                <div>Sleep State: {(response.data._debug as any).sleepScoreState}</div>
+              )}
             </div>
           </div>
         )}
