@@ -99,8 +99,10 @@ export default function Dashboard() {
   // Fetch Whoop data
   const fetchWhoopData = useCallback(async () => {
     try {
-      const res = await fetch("/api/whoop")
+      const res = await fetch("/api/whoop", { cache: "no-store" })
       const data = await res.json()
+
+      console.log("Whoop data received:", data)
 
       if (data.data) {
         setWhoopData(data.data)
@@ -153,8 +155,19 @@ export default function Dashboard() {
 
   const refreshWhoopData = async () => {
     setIsRefreshing(true)
-    await fetchWhoopData()
-    setIsRefreshing(false)
+    try {
+      const res = await fetch("/api/whoop", { cache: "no-store" })
+      const data = await res.json()
+
+      if (data.data) {
+        setWhoopData(data.data)
+        setIsConnected(data.connected && !data.demo)
+      }
+    } catch (error) {
+      console.error("Failed to refresh Whoop data:", error)
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   // Adjust workout based on recovery

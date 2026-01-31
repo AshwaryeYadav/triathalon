@@ -128,8 +128,54 @@ export default function WhoopPage() {
 
   const refreshData = async () => {
     setIsRefreshing(true)
-    await fetchWhoopData()
-    setIsRefreshing(false)
+    setError(null)
+    try {
+      const res = await fetch("/api/whoop", { cache: "no-store" })
+      const data = await res.json()
+
+      console.log("Whoop refresh response:", data)
+
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to fetch Whoop data")
+      }
+
+      setResponse(data)
+      if (data.message && data.demo) {
+        console.log("Whoop status:", data.message)
+      } else {
+        setError(null)
+      }
+
+      // Generate mock historical data for demo mode
+      if (data.demo) {
+        const history: WhoopData[] = []
+        for (let i = 0; i < 7; i++) {
+          history.push({
+            recovery: {
+              score: Math.floor(Math.random() * 40) + 50,
+              hrv: Math.floor(Math.random() * 30) + 40,
+              restingHR: Math.floor(Math.random() * 15) + 50,
+              sleepPerformance: Math.floor(Math.random() * 20) + 70,
+            },
+            strain: {
+              dayStrain: Math.random() * 8 + 4,
+              calories: Math.floor(Math.random() * 500) + 2000,
+              averageHR: Math.floor(Math.random() * 20) + 80,
+            },
+            sleep: {
+              duration: Math.floor(Math.random() * 120) + 360,
+              efficiency: Math.floor(Math.random() * 15) + 80,
+            },
+            lastUpdated: new Date().toISOString(),
+          })
+        }
+        setHistoricalData(history)
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to refresh data")
+    } finally {
+      setIsRefreshing(false)
+    }
   }
 
   const connectWhoop = async () => {
