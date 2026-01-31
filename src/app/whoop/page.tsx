@@ -325,28 +325,35 @@ export default function WhoopPage() {
         {/* Debug Info */}
         {response?.data?._debug && (
           <div className="mb-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/30">
-            <p className="text-sm font-medium text-blue-400 mb-2">🔍 Debug Info</p>
+            <p className="text-sm font-medium text-blue-400 mb-2">🔍 Debug Info (Whoop API v2)</p>
             <div className="text-xs text-blue-400/80 font-mono space-y-1">
-              <div>API Version: {(response.data._debug as any).apiVersion ?? "v2"}</div>
+              <div>API Base: {(response.data._debug as any).apiBase ?? "https://api.prod.whoop.com/developer/v2"}</div>
               <div>Connected: {isConnected ? "Yes" : "No"}</div>
               <div>Demo Mode: {isDemo ? "Yes" : "No"}</div>
+              
               <div className="mt-2 font-semibold">Records Found:</div>
-              <div>• Recovery Records: {(response.data._debug as any).recoveryCount ?? 0}</div>
-              <div>• Cycle Records: {(response.data._debug as any).cycleCount ?? 0}</div>
-              <div>• Sleep Records: {(response.data._debug as any).sleepCount ?? 0}</div>
-              <div className="mt-2 font-semibold">Parsed Values:</div>
+              <div>• Recovery: {(response.data._debug as any).recoveryCount ?? 0} records</div>
+              <div>• Cycle (Strain): {(response.data._debug as any).cycleCount ?? 0} records</div>
+              <div>• Sleep: {(response.data._debug as any).sleepCount ?? 0} records</div>
+              <div>• Workouts: {(response.data._debug as any).workoutCount ?? 0} records</div>
+              
+              <div className="mt-2 font-semibold">Score States:</div>
+              <div>• Recovery: {(response.data._debug as any).recoveryScoreState ?? "none"}</div>
+              <div>• Cycle: {(response.data._debug as any).cycleScoreState ?? "none"}</div>
+              <div>• Sleep: {(response.data._debug as any).sleepScoreState ?? "none"}</div>
+              
+              <div className="mt-2 font-semibold">Raw API Values:</div>
               <div>• Recovery Score: {response.data._debug.rawRecoveryScore ?? "null"}</div>
               <div>• HRV (ms): {response.data._debug.rawHrv ?? "null"}</div>
               <div>• Resting HR: {response.data._debug.rawRestingHR ?? "null"}</div>
-              {(response.data._debug as any).recoveryScoreState && (
-                <div>• Recovery State: {(response.data._debug as any).recoveryScoreState}</div>
-              )}
-              {(response.data._debug as any).sleepScoreState && (
-                <div>• Sleep State: {(response.data._debug as any).sleepScoreState}</div>
-              )}
+              <div>• Strain: {(response.data._debug as any).rawStrain ?? "null"}</div>
+              
               {(response.data._debug as any).errors && (
-                <div className="mt-2 text-red-400">
-                  Errors: {(response.data._debug as any).errors.join(", ")}
+                <div className="mt-2 p-2 bg-red-500/20 rounded text-red-400">
+                  <strong>API Errors:</strong><br />
+                  {(response.data._debug as any).errors.map((err: string, i: number) => (
+                    <div key={i}>• {err}</div>
+                  ))}
                 </div>
               )}
             </div>

@@ -13,10 +13,11 @@ export interface WhoopTokens {
   expiresAt: number
 }
 
-// v2 Recovery data model
+// v2 Recovery data model (from docs)
+// Endpoint: GET /developer/v2/recovery
 export interface WhoopRecovery {
   cycle_id: number
-  sleep_id: number
+  sleep_id: string // UUID
   user_id: number
   created_at: string
   updated_at: string
@@ -32,13 +33,14 @@ export interface WhoopRecovery {
 }
 
 // v2 Cycle data model (from docs)
+// Endpoint: GET /developer/v2/cycle
 export interface WhoopCycle {
   id: number
   user_id: number
   created_at: string
   updated_at: string
   start: string
-  end: string | null
+  end: string | null // null if user is currently in this cycle
   timezone_offset: string
   score_state: "SCORED" | "PENDING_SCORE" | "UNSCORABLE"
   score: {
@@ -49,9 +51,11 @@ export interface WhoopCycle {
   } | null
 }
 
-// v2 Sleep data model
+// v2 Sleep data model (from docs)
+// Endpoint: GET /developer/v2/activity/sleep
 export interface WhoopSleep {
-  id: number
+  id: string // UUID
+  cycle_id: number
   user_id: number
   created_at: string
   updated_at: string
@@ -84,11 +88,42 @@ export interface WhoopSleep {
   } | null
 }
 
+// v2 Workout data model (from docs)
+// Endpoint: GET /developer/v2/activity/workout
+export interface WhoopWorkout {
+  id: string // UUID
+  user_id: number
+  created_at: string
+  updated_at: string
+  start: string
+  end: string
+  timezone_offset: string
+  sport_name: string
+  score_state: "SCORED" | "PENDING_SCORE" | "UNSCORABLE"
+  score: {
+    strain: number
+    average_heart_rate: number
+    max_heart_rate: number
+    kilojoule: number
+    percent_recorded: number
+    distance_meter: number | null
+    altitude_gain_meter: number | null
+    altitude_change_meter: number | null
+    zone_durations: Record<string, number>
+  } | null
+}
+
 export interface WhoopProfile {
   user_id: number
   email: string
   first_name: string
   last_name: string
+}
+
+// Paginated response wrapper
+interface PaginatedResponse<T> {
+  records: T[]
+  next_token?: string
 }
 
 // Generate OAuth authorization URL
@@ -100,7 +135,7 @@ export function getWhoopAuthUrl(redirectUri: string, state?: string): string {
     client_id: clientId,
     redirect_uri: redirectUri,
     response_type: "code",
-    scope: "read:recovery read:cycles read:sleep read:profile offline",
+    scope: "read:recovery read:cycles read:sleep read:workout read:profile offline",
     state: state || generateState(),
   })
 
@@ -203,61 +238,84 @@ export async function getWhoopProfile(
 }
 
 // Generic fetch helper with full response logging
-async function whoopFetch(url: string, accessToken: string, endpoint: string): Promise<any> {
+async function whoopFetch<T>(url: string, accessToken: string, endpoint: string): Promise<PaginatedResponse<T>> {
   console.log(`[Whoop ${endpoint}] Fetching: ${url}`)
   
   const response = await fetch(url, {
     headers: {
       Authorization: `Bearer ${accessToken}`,
     },
+    cache: "no-store",
   })
 
   const responseText = await response.text()
   console.log(`[Whoop ${endpoint}] Status: ${response.status}`)
-  console.log(`[Whoop ${endpoint}] Response: ${responseText.slice(0, 1000)}`)
+  console.log(`[Whoop ${endpoint}] Response (first 2000 chars): ${responseText.slice(0, 2000)}`)
 
   if (!response.ok) {
     throw new Error(`Whoop ${endpoint} failed: ${response.status} - ${responseText.slice(0, 200)}`)
   }
 
   try {
-    return JSON.parse(responseText)
+    const data = JSON.parse(responseText)
+    // API returns { records: [...], next_token: ... }
+    if (data.records) {
+      return data as PaginatedResponse<T>
+    }
+    // Fallback if it's just an array
+    if (Array.isArray(data)) {
+      return { records: data }
+    }
+    // Single object response (like profile)
+    return { records: [data] }
   } catch {
-    return responseText
+    console.error(`[Whoop ${endpoint}] Failed to parse JSON:`, responseText)
+    return { records: [] }
   }
 }
 
 // v2 API: Fetch recovery data
-// Endpoint: GET /v2/recovery
+// Endpoint: GET /developer/v2/recovery
 export async function getWhoopRecovery(
   accessToken: string,
   limit: number = 10
 ): Promise<WhoopRecovery[]> {
   const url = `${WHOOP_API_BASE}/recovery?limit=${limit}`
-  const data = await whoopFetch(url, accessToken, "Recovery")
-  return data.records || data || []
+  const data = await whoopFetch<WhoopRecovery>(url, accessToken, "Recovery")
+  return data.records
 }
 
 // v2 API: Fetch cycle (strain) data  
-// Endpoint: GET /v2/cycle
+// Endpoint: GET /developer/v2/cycle
 export async function getWhoopCycles(
   accessToken: string,
   limit: number = 10
 ): Promise<WhoopCycle[]> {
   const url = `${WHOOP_API_BASE}/cycle?limit=${limit}`
-  const data = await whoopFetch(url, accessToken, "Cycle")
-  return data.records || data || []
+  const data = await whoopFetch<WhoopCycle>(url, accessToken, "Cycle")
+  return data.records
 }
 
 // v2 API: Fetch sleep data
-// Endpoint: GET /v2/activity/sleep
+// Endpoint: GET /developer/v2/activity/sleep
 export async function getWhoopSleep(
   accessToken: string,
   limit: number = 10
 ): Promise<WhoopSleep[]> {
   const url = `${WHOOP_API_BASE}/activity/sleep?limit=${limit}`
-  const data = await whoopFetch(url, accessToken, "Sleep")
-  return data.records || data || []
+  const data = await whoopFetch<WhoopSleep>(url, accessToken, "Sleep")
+  return data.records
+}
+
+// v2 API: Fetch workout data
+// Endpoint: GET /developer/v2/activity/workout
+export async function getWhoopWorkouts(
+  accessToken: string,
+  limit: number = 10
+): Promise<WhoopWorkout[]> {
+  const url = `${WHOOP_API_BASE}/activity/workout?limit=${limit}`
+  const data = await whoopFetch<WhoopWorkout>(url, accessToken, "Workout")
+  return data.records
 }
 
 // Get all Whoop data
@@ -265,30 +323,47 @@ export async function getTodaysWhoopData(accessToken: string) {
   let recoveryRecords: WhoopRecovery[] = []
   let cycleRecords: WhoopCycle[] = []
   let sleepRecords: WhoopSleep[] = []
+  let workoutRecords: WhoopWorkout[] = []
   let errors: string[] = []
 
-  try {
-    recoveryRecords = await getWhoopRecovery(accessToken, 5)
+  // Fetch all data in parallel
+  const [recoveryResult, cycleResult, sleepResult, workoutResult] = await Promise.allSettled([
+    getWhoopRecovery(accessToken, 5),
+    getWhoopCycles(accessToken, 3),
+    getWhoopSleep(accessToken, 5),
+    getWhoopWorkouts(accessToken, 10),
+  ])
+
+  if (recoveryResult.status === "fulfilled") {
+    recoveryRecords = recoveryResult.value
     console.log(`Found ${recoveryRecords.length} recovery records`)
-  } catch (e: any) {
-    console.log("Could not fetch recovery:", e.message)
-    errors.push(`Recovery: ${e.message}`)
+  } else {
+    console.log("Could not fetch recovery:", recoveryResult.reason)
+    errors.push(`Recovery: ${recoveryResult.reason}`)
   }
 
-  try {
-    cycleRecords = await getWhoopCycles(accessToken, 3)
+  if (cycleResult.status === "fulfilled") {
+    cycleRecords = cycleResult.value
     console.log(`Found ${cycleRecords.length} cycle records`)
-  } catch (e: any) {
-    console.log("Could not fetch cycles:", e.message)
-    errors.push(`Cycle: ${e.message}`)
+  } else {
+    console.log("Could not fetch cycles:", cycleResult.reason)
+    errors.push(`Cycle: ${cycleResult.reason}`)
   }
 
-  try {
-    sleepRecords = await getWhoopSleep(accessToken, 5)
+  if (sleepResult.status === "fulfilled") {
+    sleepRecords = sleepResult.value
     console.log(`Found ${sleepRecords.length} sleep records`)
-  } catch (e: any) {
-    console.log("Could not fetch sleep:", e.message)
-    errors.push(`Sleep: ${e.message}`)
+  } else {
+    console.log("Could not fetch sleep:", sleepResult.reason)
+    errors.push(`Sleep: ${sleepResult.reason}`)
+  }
+
+  if (workoutResult.status === "fulfilled") {
+    workoutRecords = workoutResult.value
+    console.log(`Found ${workoutRecords.length} workout records`)
+  } else {
+    console.log("Could not fetch workouts:", workoutResult.reason)
+    errors.push(`Workout: ${workoutResult.reason}`)
   }
 
   // Get the most recent SCORED data
@@ -312,6 +387,7 @@ export async function getTodaysWhoopData(accessToken: string) {
       sleepPerformance: Math.round(sleep?.sleep_performance_percentage ?? 0),
       spo2: recovery?.spo2_percentage ?? null,
       skinTemp: recovery?.skin_temp_celsius ?? null,
+      userCalibrating: recovery?.user_calibrating ?? false,
     },
     strain: {
       dayStrain: cycle?.strain ?? 0,
@@ -341,20 +417,40 @@ export async function getTodaysWhoopData(accessToken: string) {
         : 0,
       disturbances: sleep?.stage_summary?.disturbance_count ?? 0,
     },
+    workouts: workoutRecords
+      .filter(w => w.score_state === "SCORED")
+      .slice(0, 5)
+      .map(w => ({
+        id: w.id,
+        sport: w.sport_name,
+        strain: w.score?.strain ?? 0,
+        calories: w.score?.kilojoule ? Math.round(w.score.kilojoule * 0.239) : 0,
+        duration: Math.round((new Date(w.end).getTime() - new Date(w.start).getTime()) / 60000),
+        start: w.start,
+        end: w.end,
+        averageHR: w.score?.average_heart_rate ?? 0,
+        maxHR: w.score?.max_heart_rate ?? 0,
+        distance: w.score?.distance_meter ? Math.round(w.score.distance_meter) : null,
+      })),
     lastUpdated: new Date().toISOString(),
     hasData: !!(recovery || cycle || sleep),
     _debug: {
       apiVersion: "v2",
+      apiBase: WHOOP_API_BASE,
       hasRecovery: !!recovery,
       hasCycle: !!cycle,
       hasSleep: !!sleep,
+      hasWorkouts: workoutRecords.length > 0,
       recoveryCount: recoveryRecords.length,
       cycleCount: cycleRecords.length,
       sleepCount: sleepRecords.length,
+      workoutCount: workoutRecords.length,
       rawRecoveryScore: recovery?.recovery_score ?? null,
       rawHrv: recovery?.hrv_rmssd_milli ?? null,
       rawRestingHR: recovery?.resting_heart_rate ?? null,
+      rawStrain: cycle?.strain ?? null,
       recoveryScoreState: latestRecovery?.score_state ?? null,
+      cycleScoreState: latestCycle?.score_state ?? null,
       sleepScoreState: latestSleep?.score_state ?? null,
       errors: errors.length > 0 ? errors : null,
     }
@@ -364,7 +460,7 @@ export async function getTodaysWhoopData(accessToken: string) {
   return result
 }
 
-// Get historical Whoop data (last 7 days)
+// Get historical Whoop data (last N days)
 export async function getHistoricalWhoopData(accessToken: string, days: number = 7) {
   try {
     const recoveries = await getWhoopRecovery(accessToken, days)
@@ -404,6 +500,7 @@ export function getMockWhoopData() {
       sleepPerformance: Math.floor(Math.random() * 20) + 70,
       spo2: 98,
       skinTemp: null,
+      userCalibrating: false,
     },
     strain: {
       dayStrain: Math.random() * 8 + 4,
@@ -421,20 +518,26 @@ export function getMockWhoopData() {
       remSleep: Math.floor(Math.random() * 30) + 60,
       disturbances: Math.floor(Math.random() * 5),
     },
+    workouts: [],
     lastUpdated: today.toISOString(),
     hasData: false,
     _debug: {
       apiVersion: "v2 (demo)",
+      apiBase: WHOOP_API_BASE,
       hasRecovery: false,
       hasCycle: false,
       hasSleep: false,
+      hasWorkouts: false,
       recoveryCount: 0,
       cycleCount: 0,
       sleepCount: 0,
+      workoutCount: 0,
       rawRecoveryScore: null,
       rawHrv: null,
       rawRestingHR: null,
+      rawStrain: null,
       recoveryScoreState: null,
+      cycleScoreState: null,
       sleepScoreState: null,
       errors: null,
     }
@@ -444,4 +547,24 @@ export function getMockWhoopData() {
 // Check if Whoop credentials are configured
 export function isWhoopConfigured(): boolean {
   return !!(process.env.WHOOP_CLIENT_ID && process.env.WHOOP_CLIENT_SECRET)
+}
+
+// Whoop sport IDs for reference
+export const WHOOP_SPORTS: Record<number, string> = {
+  "-1": "Activity",
+  0: "Running",
+  1: "Cycling",
+  16: "Baseball",
+  17: "Basketball",
+  18: "Rowing",
+  33: "Swimming",
+  44: "Yoga",
+  45: "Weightlifting",
+  48: "Functional Fitness",
+  52: "Hiking/Rucking",
+  62: "Triathlon",
+  63: "Walking",
+  96: "HIIT",
+  97: "Spin",
+  128: "Stretching",
 }
