@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { motion } from "framer-motion"
 import {
   Bell,
@@ -8,11 +8,13 @@ import {
   Activity,
   User,
   Save,
-  ChevronRight,
   RefreshCw,
   CheckCircle,
   ExternalLink,
   AlertCircle,
+  BellRing,
+  CalendarPlus,
+  Smartphone,
 } from "lucide-react"
 
 export default function SettingsPage() {
@@ -34,24 +36,119 @@ export default function SettingsPage() {
   const [isSyncing, setIsSyncing] = useState(false)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [isSaving, setIsSaving] = useState(false)
+  const [pushPermission, setPushPermission] = useState<NotificationPermission>("default")
+  const [pushSubscribed, setPushSubscribed] = useState(false)
+  const [weeksToSync, setWeeksToSync] = useState(1)
 
   // Check connection status on load
-  useEffect(() => {
-    checkConnections()
-  }, [])
-
-  const checkConnections = async () => {
+  const checkConnections = useCallback(async () => {
     try {
       const whoopRes = await fetch("/api/whoop")
       const whoopData = await whoopRes.json()
       setWhoopConnected(whoopData.connected && !whoopData.demo)
+      
+      // Check if user is signed in with Google (has calendar access)
+      const calendarCheck = await fetch("/api/calendar/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ check: true }),
+      }).catch(() => null)
+      
+      if (calendarCheck?.ok) {
+        const data = await calendarCheck.json()
+        setGoogleConnected(!data.error?.includes("sign in"))
+      }
     } catch {
       setWhoopConnected(false)
     }
+  }, [])
 
-    // Google connection is determined by session
-    // For now, assume connected if we have the scope
-    setGoogleConnected(false) // Will be updated when user signs in with Google
+  useEffect(() => {
+    checkConnections()
+    
+    // Check push notification permission
+    if ("Notification" in window) {
+      setPushPermission(Notification.permission)
+      // Check if already subscribed
+      if ("serviceWorker" in navigator) {
+        navigator.serviceWorker.ready.then((registration) => {
+          registration.pushManager.getSubscription().then((subscription) => {
+            setPushSubscribed(!!subscription)
+            if (subscription) {
+              setNotifications((prev) => ({ ...prev, pushEnabled: true }))
+            }
+          })
+        })
+      }
+    }
+    
+    // Load saved settings from localStorage
+    const savedProfile = localStorage.getItem("userProfile")
+    if (savedProfile) setProfile(JSON.parse(savedProfile))
+    const savedNotifications = localStorage.getItem("notificationSettings")
+    if (savedNotifications) setNotifications(JSON.parse(savedNotifications))
+  }, [checkConnections])
+
+  const enablePushNotifications = async () => {
+    try {
+      // Request notification permission
+      const permission = await Notification.requestPermission()
+      setPushPermission(permission)
+
+      if (permission !== "granted") {
+        alert("Please enable notifications in your browser settings")
+        return
+      }
+
+      // Register service worker
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.register("/sw.js")
+        console.log("Service Worker registered:", registration)
+
+        // Subscribe to push
+        const subscription = await registration.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: urlBase64ToUint8Array(
+            process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || ""
+          ),
+        })
+
+        // Send subscription to server
+        await fetch("/api/notifications/subscribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(subscription),
+        })
+
+        setPushSubscribed(true)
+        setNotifications((prev) => ({ ...prev, pushEnabled: true }))
+        
+        // Show test notification
+        new Notification("TriCoach 🏊‍♂️🚴🏃", {
+          body: "Push notifications enabled! You'll receive workout reminders.",
+          icon: "/favicon.ico",
+        })
+      }
+    } catch (error) {
+      console.error("Failed to enable push notifications:", error)
+      alert("Failed to enable push notifications. Make sure VAPID keys are configured.")
+    }
+  }
+
+  const disablePushNotifications = async () => {
+    try {
+      if ("serviceWorker" in navigator) {
+        const registration = await navigator.serviceWorker.ready
+        const subscription = await registration.pushManager.getSubscription()
+        if (subscription) {
+          await subscription.unsubscribe()
+        }
+      }
+      setPushSubscribed(false)
+      setNotifications((prev) => ({ ...prev, pushEnabled: false }))
+    } catch (error) {
+      console.error("Failed to disable push notifications:", error)
+    }
   }
 
   const syncCalendar = async () => {
@@ -59,18 +156,33 @@ export default function SettingsPage() {
     setSyncMessage(null)
 
     try {
-      const res = await fetch("/api/calendar/sync", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ week: 1 }),
-      })
+      // Sync multiple weeks
+      const results = []
+      for (let week = 1; week <= weeksToSync; week++) {
+        const res = await fetch("/api/calendar/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ week }),
+        })
 
-      const data = await res.json()
+        const data = await res.json()
+        
+        if (res.ok) {
+          results.push({ week, success: true, synced: data.synced })
+        } else {
+          results.push({ week, success: false, error: data.error })
+        }
+      }
 
-      if (res.ok) {
-        setSyncMessage(`✅ ${data.message}`)
+      const successful = results.filter((r) => r.success)
+      const failed = results.filter((r) => !r.success)
+
+      if (failed.length > 0 && failed[0].error) {
+        setSyncMessage(`❌ ${failed[0].error}`)
       } else {
-        setSyncMessage(`❌ ${data.error}`)
+        const totalSynced = successful.reduce((sum, r) => sum + (r.synced || 0), 0)
+        setSyncMessage(`✅ Synced ${totalSynced} workouts for ${weeksToSync} week(s)!`)
+        setGoogleConnected(true)
       }
     } catch (error) {
       setSyncMessage("❌ Failed to sync calendar")
@@ -81,8 +193,10 @@ export default function SettingsPage() {
 
   const saveSettings = async () => {
     setIsSaving(true)
-    // TODO: Save to database
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    // Save to localStorage
+    localStorage.setItem("userProfile", JSON.stringify(profile))
+    localStorage.setItem("notificationSettings", JSON.stringify(notifications))
+    await new Promise((resolve) => setTimeout(resolve, 500))
     setIsSaving(false)
   }
 
@@ -181,7 +295,67 @@ export default function SettingsPage() {
           </div>
         </motion.div>
 
-        {/* Notifications Section */}
+        {/* Push Notifications Section */}
+        <motion.div
+          className="glass-card p-6 mb-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.05 }}
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <BellRing className="w-5 h-5 text-[var(--bike-orange)]" />
+            <h2 className="text-lg font-semibold text-white">Push Notifications</h2>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[var(--bg-tertiary)]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#ff6b35] to-[#f7931e] flex items-center justify-center">
+                  <Smartphone className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="font-medium text-white">Browser Notifications</div>
+                  <div className="text-sm text-[var(--text-muted)]">
+                    Get workout reminders and recovery alerts
+                  </div>
+                </div>
+              </div>
+              
+              {pushSubscribed ? (
+                <button
+                  onClick={disablePushNotifications}
+                  className="btn-secondary text-sm"
+                >
+                  Disable
+                </button>
+              ) : (
+                <button
+                  onClick={enablePushNotifications}
+                  disabled={pushPermission === "denied"}
+                  className="btn-primary text-sm flex items-center gap-2"
+                >
+                  <Bell className="w-4 h-4" />
+                  Enable
+                </button>
+              )}
+            </div>
+
+            {pushPermission === "denied" && (
+              <div className="text-xs p-3 rounded-lg bg-red-500/10 text-red-400">
+                ⚠️ Notifications are blocked. Enable them in your browser settings.
+              </div>
+            )}
+
+            {pushSubscribed && (
+              <div className="text-xs p-3 rounded-lg bg-green-500/10 text-green-400 flex items-center gap-2">
+                <CheckCircle className="w-4 h-4" />
+                Push notifications are enabled! You'll receive workout reminders.
+              </div>
+            )}
+          </div>
+        </motion.div>
+
+        {/* Notification Preferences Section */}
         <motion.div
           className="glass-card p-6 mb-6"
           initial={{ opacity: 0, y: 20 }}
@@ -190,13 +364,13 @@ export default function SettingsPage() {
         >
           <div className="flex items-center gap-3 mb-6">
             <Bell className="w-5 h-5 text-[var(--bike-orange)]" />
-            <h2 className="text-lg font-semibold text-white">Notifications</h2>
+            <h2 className="text-lg font-semibold text-white">Notification Preferences</h2>
           </div>
 
           <div className="space-y-4">
             <ToggleSetting
               label="Workout Reminders"
-              description="Get notified before scheduled workouts"
+              description="30 minutes before scheduled workouts"
               enabled={notifications.workoutReminders}
               onChange={(v) =>
                 setNotifications({ ...notifications, workoutReminders: v })
@@ -204,7 +378,7 @@ export default function SettingsPage() {
             />
             <ToggleSetting
               label="Recovery Alerts"
-              description="Alerts when recovery score affects your workout"
+              description="When low recovery affects your workout"
               enabled={notifications.recoveryAlerts}
               onChange={(v) =>
                 setNotifications({ ...notifications, recoveryAlerts: v })
@@ -212,24 +386,103 @@ export default function SettingsPage() {
             />
             <ToggleSetting
               label="Weekly Summary"
-              description="Receive a weekly training summary"
+              description="Sunday evening training recap"
               enabled={notifications.weeklySummary}
               onChange={(v) =>
                 setNotifications({ ...notifications, weeklySummary: v })
               }
             />
-            <ToggleSetting
-              label="Push Notifications"
-              description="Enable browser push notifications"
-              enabled={notifications.pushEnabled}
-              onChange={(v) =>
-                setNotifications({ ...notifications, pushEnabled: v })
-              }
-            />
           </div>
         </motion.div>
 
-        {/* Integrations Section */}
+        {/* Google Calendar Section */}
+        <motion.div
+          className="glass-card p-6 mb-6"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+        >
+          <div className="flex items-center gap-3 mb-6">
+            <CalendarPlus className="w-5 h-5 text-[var(--run-green)]" />
+            <h2 className="text-lg font-semibold text-white">Google Calendar Sync</h2>
+          </div>
+
+          <div className="p-4 rounded-xl bg-[var(--bg-tertiary)]">
+            <div className="flex items-center justify-between mb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#4285f4] to-[#34a853] flex items-center justify-center">
+                  <Calendar className="w-5 h-5 text-white" />
+                </div>
+                <div>
+                  <div className="font-medium text-white">Google Calendar</div>
+                  <div className="text-sm text-[var(--text-muted)]">
+                    {googleConnected ? "Connected" : "Sync workouts to your calendar"}
+                  </div>
+                </div>
+              </div>
+              {googleConnected && (
+                <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400 flex items-center gap-1">
+                  <CheckCircle className="w-3 h-3" />
+                  Connected
+                </span>
+              )}
+            </div>
+
+            {/* Weeks selector */}
+            <div className="mb-4">
+              <label className="block text-sm text-[var(--text-muted)] mb-2">
+                Weeks to sync ahead
+              </label>
+              <div className="flex gap-2">
+                {[1, 2, 3, 4].map((w) => (
+                  <button
+                    key={w}
+                    onClick={() => setWeeksToSync(w)}
+                    className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                      weeksToSync === w
+                        ? "bg-[var(--swim-blue)] text-white"
+                        : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:bg-[var(--bg-card-hover)]"
+                    }`}
+                  >
+                    {w} week{w > 1 ? "s" : ""}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <button
+              onClick={syncCalendar}
+              disabled={isSyncing}
+              className="w-full btn-primary flex items-center justify-center gap-2"
+            >
+              {isSyncing ? (
+                <RefreshCw className="w-4 h-4 animate-spin" />
+              ) : (
+                <Calendar className="w-4 h-4" />
+              )}
+              Sync {weeksToSync} Week{weeksToSync > 1 ? "s" : ""} to Calendar
+            </button>
+
+            {syncMessage && (
+              <div
+                className={`mt-4 text-sm p-3 rounded-lg ${
+                  syncMessage.startsWith("✅")
+                    ? "bg-green-500/10 text-green-400"
+                    : "bg-red-500/10 text-red-400"
+                }`}
+              >
+                {syncMessage}
+              </div>
+            )}
+
+            <div className="mt-4 text-xs text-[var(--text-muted)]">
+              <AlertCircle className="w-3 h-3 inline mr-1" />
+              Sign in with Google (not demo mode) to enable calendar sync.
+            </div>
+          </div>
+        </motion.div>
+
+        {/* Whoop Integration Section */}
         <motion.div
           className="glass-card p-6 mb-6"
           initial={{ opacity: 0, y: 20 }}
@@ -237,95 +490,45 @@ export default function SettingsPage() {
           transition={{ delay: 0.2 }}
         >
           <div className="flex items-center gap-3 mb-6">
-            <Activity className="w-5 h-5 text-[var(--run-green)]" />
-            <h2 className="text-lg font-semibold text-white">Integrations</h2>
+            <Activity className="w-5 h-5 text-[var(--swim-blue)]" />
+            <h2 className="text-lg font-semibold text-white">WHOOP Integration</h2>
           </div>
 
-          <div className="space-y-4">
-            {/* Whoop Integration */}
-            <div className="p-4 rounded-xl bg-[var(--bg-tertiary)]">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00d4ff] to-[#0066ff] flex items-center justify-center">
-                    <Activity className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-white">WHOOP</div>
-                    <div className="text-sm text-[var(--text-muted)]">
-                      Sync recovery and strain data
-                    </div>
-                  </div>
+          <div className="p-4 rounded-xl bg-[var(--bg-tertiary)]">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#00d4ff] to-[#0066ff] flex items-center justify-center">
+                  <Activity className="w-5 h-5 text-white" />
                 </div>
-                <div className="flex items-center gap-3">
-                  {whoopConnected ? (
-                    <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400 flex items-center gap-1">
-                      <CheckCircle className="w-3 h-3" />
-                      Connected
-                    </span>
-                  ) : (
-                    <button
-                      onClick={connectWhoop}
-                      className="btn-primary text-sm flex items-center gap-2"
-                    >
-                      <ExternalLink className="w-4 h-4" />
-                      Connect
-                    </button>
-                  )}
+                <div>
+                  <div className="font-medium text-white">WHOOP</div>
+                  <div className="text-sm text-[var(--text-muted)]">
+                    Recovery, strain, and sleep data
+                  </div>
                 </div>
               </div>
-              {whoopError && (
-                <div className="mt-3 text-sm p-3 rounded-lg bg-red-500/10 text-red-400">
-                  ⚠️ {whoopError}
-                </div>
-              )}
-            </div>
-
-            {/* Google Calendar Integration */}
-            <div className="p-4 rounded-xl bg-[var(--bg-tertiary)]">
-              <div className="flex items-center justify-between mb-4">
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-[#4285f4] to-[#34a853] flex items-center justify-center">
-                    <Calendar className="w-5 h-5 text-white" />
-                  </div>
-                  <div>
-                    <div className="font-medium text-white">Google Calendar</div>
-                    <div className="text-sm text-[var(--text-muted)]">
-                      Sync workouts to your calendar
-                    </div>
-                  </div>
-                </div>
-                <button
-                  onClick={syncCalendar}
-                  disabled={isSyncing}
-                  className="btn-secondary text-sm flex items-center gap-2"
-                >
-                  {isSyncing ? (
-                    <RefreshCw className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Calendar className="w-4 h-4" />
-                  )}
-                  Sync Week
-                </button>
-              </div>
-
-              {syncMessage && (
-                <div
-                  className={`text-sm p-3 rounded-lg ${
-                    syncMessage.startsWith("✅")
-                      ? "bg-green-500/10 text-green-400"
-                      : "bg-red-500/10 text-red-400"
-                  }`}
-                >
-                  {syncMessage}
-                </div>
-              )}
-
-              <div className="mt-4 text-xs text-[var(--text-muted)]">
-                <AlertCircle className="w-3 h-3 inline mr-1" />
-                Sign in with Google to enable calendar sync. Add GOOGLE_CLIENT_ID and
-                GOOGLE_CLIENT_SECRET to your environment variables.
+              <div className="flex items-center gap-3">
+                {whoopConnected ? (
+                  <span className="text-xs px-2 py-1 rounded-full bg-green-500/10 text-green-400 flex items-center gap-1">
+                    <CheckCircle className="w-3 h-3" />
+                    Connected
+                  </span>
+                ) : (
+                  <button
+                    onClick={connectWhoop}
+                    className="btn-primary text-sm flex items-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Connect
+                  </button>
+                )}
               </div>
             </div>
+            {whoopError && (
+              <div className="mt-3 text-sm p-3 rounded-lg bg-red-500/10 text-red-400">
+                ⚠️ {whoopError}
+              </div>
+            )}
           </div>
         </motion.div>
 
@@ -334,7 +537,7 @@ export default function SettingsPage() {
           className="glass-card p-6 mb-6"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.3 }}
+          transition={{ delay: 0.25 }}
         >
           <h2 className="text-lg font-semibold text-white mb-4">
             🔧 Setup Instructions
@@ -345,8 +548,8 @@ export default function SettingsPage() {
               <ol className="list-decimal list-inside space-y-1 text-xs">
                 <li>Go to <a href="https://developer.whoop.com" target="_blank" rel="noopener noreferrer" className="text-[var(--swim-blue)] underline">developer.whoop.com</a></li>
                 <li>Create a new application</li>
-                <li>Set redirect URI to: <code className="bg-[var(--bg-tertiary)] px-1 rounded">https://your-domain.com/api/whoop/callback</code></li>
-                <li>Add WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET to Vercel environment variables</li>
+                <li>Set redirect URI to: <code className="bg-[var(--bg-tertiary)] px-1 rounded">https://triathalon.vercel.app/api/whoop/callback</code></li>
+                <li>Add WHOOP_CLIENT_ID and WHOOP_CLIENT_SECRET to Vercel</li>
               </ol>
             </div>
             <div>
@@ -356,6 +559,15 @@ export default function SettingsPage() {
                 <li>Create OAuth 2.0 credentials</li>
                 <li>Enable Google Calendar API</li>
                 <li>Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to Vercel</li>
+                <li>Add redirect URI: <code className="bg-[var(--bg-tertiary)] px-1 rounded">https://triathalon.vercel.app/api/auth/callback/google</code></li>
+              </ol>
+            </div>
+            <div>
+              <h3 className="font-medium text-white mb-2">Push Notifications (Optional)</h3>
+              <ol className="list-decimal list-inside space-y-1 text-xs">
+                <li>Generate VAPID keys: <code className="bg-[var(--bg-tertiary)] px-1 rounded">npx web-push generate-vapid-keys</code></li>
+                <li>Add NEXT_PUBLIC_VAPID_PUBLIC_KEY to Vercel</li>
+                <li>Add VAPID_PRIVATE_KEY to Vercel</li>
               </ol>
             </div>
           </div>
@@ -368,7 +580,7 @@ export default function SettingsPage() {
           className="btn-primary w-full flex items-center justify-center gap-2"
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
+          transition={{ delay: 0.3 }}
         >
           {isSaving ? (
             <RefreshCw className="w-4 h-4 animate-spin" />
@@ -414,4 +626,16 @@ function ToggleSetting({
       </button>
     </div>
   )
+}
+
+// Helper to convert VAPID key
+function urlBase64ToUint8Array(base64String: string): Uint8Array {
+  const padding = "=".repeat((4 - (base64String.length % 4)) % 4)
+  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/")
+  const rawData = window.atob(base64)
+  const outputArray = new Uint8Array(rawData.length)
+  for (let i = 0; i < rawData.length; ++i) {
+    outputArray[i] = rawData.charCodeAt(i)
+  }
+  return outputArray
 }

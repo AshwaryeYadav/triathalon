@@ -36,17 +36,25 @@ interface WhoopData {
     hrv: number
     restingHR: number
     sleepPerformance: number
+    spo2?: number | null
   }
   strain: {
     dayStrain: number
     calories: number
     averageHR: number
+    maxHR?: number
   }
   sleep: {
     duration: number
     efficiency: number
+    consistency?: number
+    lightSleep?: number
+    deepSleep?: number
+    remSleep?: number
+    disturbances?: number
   }
   lastUpdated: string
+  hasData?: boolean
 }
 
 export default function Dashboard() {
@@ -261,8 +269,14 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <div className="text-2xl font-bold text-white">
-                        {whoopData?.recovery.hrv || 0}
-                        <span className="text-sm text-[var(--text-muted)] ml-1">ms</span>
+                        {whoopData?.recovery.hrv && whoopData.recovery.hrv > 0 ? (
+                          <>
+                            {whoopData.recovery.hrv}
+                            <span className="text-sm text-[var(--text-muted)] ml-1">ms</span>
+                          </>
+                        ) : (
+                          <span className="text-lg text-[var(--text-muted)]">—</span>
+                        )}
                       </div>
                     </div>
                     <div className="bg-[var(--bg-tertiary)] rounded-xl p-4">
@@ -273,8 +287,14 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <div className="text-2xl font-bold text-white">
-                        {whoopData?.recovery.restingHR || 0}
-                        <span className="text-sm text-[var(--text-muted)] ml-1">bpm</span>
+                        {whoopData?.recovery.restingHR && whoopData.recovery.restingHR > 0 ? (
+                          <>
+                            {whoopData.recovery.restingHR}
+                            <span className="text-sm text-[var(--text-muted)] ml-1">bpm</span>
+                          </>
+                        ) : (
+                          <span className="text-lg text-[var(--text-muted)]">—</span>
+                        )}
                       </div>
                     </div>
                     <div className="bg-[var(--bg-tertiary)] rounded-xl p-4">
@@ -285,7 +305,7 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <div className="text-2xl font-bold text-white">
-                        {currentStrain.toFixed(1)}
+                        {currentStrain > 0 ? currentStrain.toFixed(1) : "0.0"}
                         <span className="text-sm text-[var(--text-muted)] ml-1">/ {strainTarget}</span>
                       </div>
                       <div className="progress-bar mt-2">
@@ -303,7 +323,9 @@ export default function Dashboard() {
                         </span>
                       </div>
                       <div className="text-2xl font-bold text-white">
-                        {whoopData?.sleep.duration ? `${Math.floor(whoopData.sleep.duration / 60)}h ${whoopData.sleep.duration % 60}m` : "—"}
+                        {whoopData?.sleep.duration && whoopData.sleep.duration > 0 
+                          ? `${Math.floor(whoopData.sleep.duration / 60)}h ${whoopData.sleep.duration % 60}m` 
+                          : <span className="text-lg text-[var(--text-muted)]">—</span>}
                       </div>
                     </div>
                   </div>

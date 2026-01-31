@@ -28,6 +28,17 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
     }
 
+    const body = await request.json()
+    
+    // If just checking connection status
+    if (body.check) {
+      const googleAccessToken = session.googleAccessToken
+      if (!googleAccessToken) {
+        return NextResponse.json({ error: "Please sign in with Google" })
+      }
+      return NextResponse.json({ connected: true })
+    }
+
     if (!isGoogleCalendarConfigured()) {
       return NextResponse.json(
         { error: "Google Calendar not configured. Add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET to environment variables." },
@@ -45,7 +56,6 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const body = await request.json()
     const week = body.week || 1
     const customTimes = body.workoutTimes || {}
 

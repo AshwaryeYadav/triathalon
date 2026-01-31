@@ -232,7 +232,7 @@ export async function getWhoopRecovery(
   }
 
   const data = await response.json()
-  console.log("Whoop recovery response:", JSON.stringify(data).slice(0, 200))
+  console.log("Whoop recovery response:", JSON.stringify(data).slice(0, 500))
   return data.records || data || []
 }
 
@@ -276,6 +276,7 @@ export async function getWhoopCycles(
   }
 
   const data = await response.json()
+  console.log("Whoop cycles response:", JSON.stringify(data).slice(0, 500))
   return data.records || []
 }
 
@@ -311,69 +312,89 @@ export async function getWhoopSleep(
   }
 
   const data = await response.json()
+  console.log("Whoop sleep response:", JSON.stringify(data).slice(0, 500))
   return data.records || []
 }
 
 // Get all Whoop data for today
 export async function getTodaysWhoopData(accessToken: string) {
+  // Try to fetch data, but handle 404s gracefully (no data yet)
+  let recoveryData = null
+  let cycleData: WhoopCycle[] = []
+  let sleepData: WhoopSleep[] = []
+
   try {
-    // Try to fetch data, but handle 404s gracefully (no data yet)
-    let recoveryData = null
-    let cycleData: WhoopCycle[] = []
-    let sleepData: WhoopSleep[] = []
-
-    try {
-      recoveryData = await getLatestRecovery(accessToken)
-    } catch (e: any) {
-      console.log("Could not fetch recovery:", e.message)
-    }
-
-    try {
-      cycleData = await getWhoopCycles(accessToken, undefined, undefined, 1)
-    } catch (e: any) {
-      console.log("Could not fetch cycles:", e.message)
-    }
-
-    try {
-      sleepData = await getWhoopSleep(accessToken, undefined, undefined, 1)
-    } catch (e: any) {
-      console.log("Could not fetch sleep:", e.message)
-    }
-
-    const recovery = recoveryData?.score
-    const cycle = cycleData[0]?.score
-    const sleep = sleepData[0]?.score
-
-    return {
-      recovery: {
-        score: recovery?.recovery_score || 0,
-        hrv: recovery?.hrv_rmssd_milli ? Math.round(recovery.hrv_rmssd_milli) : 0,
-        restingHR: recovery?.resting_heart_rate || 0,
-        sleepPerformance: sleep?.sleep_performance_percentage || 0,
-      },
-      strain: {
-        dayStrain: cycle?.strain || 0,
-        calories: cycle?.kilojoule ? Math.round(cycle.kilojoule * 0.239) : 0, // kJ to kcal
-        averageHR: cycle?.average_heart_rate || 0,
-        maxHR: cycle?.max_heart_rate || 0,
-      },
-      sleep: {
-        duration: sleep?.stage_summary
-          ? Math.round(
-              (sleep.stage_summary.total_in_bed_time_milli -
-                sleep.stage_summary.total_awake_time_milli) /
-                60000
-            )
-          : 0,
-        efficiency: sleep?.sleep_efficiency_percentage || 0,
-        consistency: sleep?.sleep_consistency_percentage || 0,
-      },
-      lastUpdated: new Date().toISOString(),
-    }
-  } catch (error) {
-    console.error("Error fetching Whoop data:", error)
-    throw error
+    recoveryData = await getLatestRecovery(accessToken)
+    console.log("Recovery data:", JSON.stringify(recoveryData?.score || null))
+  } catch (e: any) {
+    console.log("Could not fetch recovery:", e.message)
   }
+
+  try {
+    cycleData = await getWhoopCycles(accessToken, undefined, undefined, 1)
+    console.log("Cycle data:", JSON.stringify(cycleData[0]?.score || null))
+  } catch (e: any) {
+    console.log("Could not fetch cycles:", e.message)
+  }
+
+  try {
+    sleepData = await getWhoopSleep(accessToken, undefined, undefined, 1)
+    console.log("Sleep data:", JSON.stringify(sleepData[0]?.score || null))
+  } catch (e: any) {
+    console.log("Could not fetch sleep:", e.message)
+  }
+
+  const recovery = recoveryData?.score
+  const cycle = cycleData[0]?.score
+  const sleep = sleepData[0]?.score
+
+  // HRV from Whoop is in milliseconds (hrv_rmssd_milli) - typically 20-100ms
+  // Resting HR is in bpm - typically 40-80
+  // Recovery score is 0-100
+  
+  const result = {
+    recovery: {
+      score: Math.round(recovery?.recovery_score ?? 0),
+      hrv: Math.round(recovery?.hrv_rmssd_milli ?? 0), // Already in ms
+      restingHR: Math.round(recovery?.resting_heart_rate ?? 0),
+      sleepPerformance: Math.round(sleep?.sleep_performance_percentage ?? 0),
+      spo2: recovery?.spo2_percentage ?? null,
+      skinTemp: recovery?.skin_temp_celsius ?? null,
+    },
+    strain: {
+      dayStrain: cycle?.strain ?? 0,
+      calories: cycle?.kilojoule ? Math.round(cycle.kilojoule * 0.239) : 0, // kJ to kcal
+      averageHR: Math.round(cycle?.average_heart_rate ?? 0),
+      maxHR: Math.round(cycle?.max_heart_rate ?? 0),
+    },
+    sleep: {
+      duration: sleep?.stage_summary
+        ? Math.round(
+            (sleep.stage_summary.total_in_bed_time_milli -
+              sleep.stage_summary.total_awake_time_milli) /
+              60000
+          )
+        : 0,
+      efficiency: Math.round(sleep?.sleep_efficiency_percentage ?? 0),
+      consistency: Math.round(sleep?.sleep_consistency_percentage ?? 0),
+      respiratoryRate: sleep?.respiratory_rate ?? null,
+      lightSleep: sleep?.stage_summary 
+        ? Math.round(sleep.stage_summary.total_light_sleep_time_milli / 60000) 
+        : 0,
+      deepSleep: sleep?.stage_summary 
+        ? Math.round(sleep.stage_summary.total_slow_wave_sleep_time_milli / 60000) 
+        : 0,
+      remSleep: sleep?.stage_summary 
+        ? Math.round(sleep.stage_summary.total_rem_sleep_time_milli / 60000) 
+        : 0,
+      disturbances: sleep?.stage_summary?.disturbance_count ?? 0,
+    },
+    lastUpdated: new Date().toISOString(),
+    hasData: !!(recovery || cycle || sleep),
+  }
+
+  console.log("Returning Whoop data:", JSON.stringify(result))
+  return result
 }
 
 // Get historical Whoop data (last 7 days)
@@ -384,9 +405,9 @@ export async function getHistoricalWhoopData(accessToken: string, days: number =
     return recoveries.map((r) => ({
       date: r.created_at,
       recovery: {
-        score: r.score?.recovery_score || 0,
-        hrv: r.score?.hrv_rmssd_milli ? Math.round(r.score.hrv_rmssd_milli) : 0,
-        restingHR: r.score?.resting_heart_rate || 0,
+        score: Math.round(r.score?.recovery_score ?? 0),
+        hrv: Math.round(r.score?.hrv_rmssd_milli ?? 0),
+        restingHR: Math.round(r.score?.resting_heart_rate ?? 0),
       },
     }))
   } catch (error) {
@@ -412,6 +433,8 @@ export function getMockWhoopData() {
       hrv: Math.floor(Math.random() * 30) + 40, // 40-70 ms
       restingHR: Math.floor(Math.random() * 15) + 50, // 50-65 bpm
       sleepPerformance: Math.floor(Math.random() * 20) + 70, // 70-90%
+      spo2: 98,
+      skinTemp: null,
     },
     strain: {
       dayStrain: Math.random() * 8 + 4, // 4-12
@@ -423,8 +446,14 @@ export function getMockWhoopData() {
       duration: Math.floor(Math.random() * 120) + 360, // 6-8 hours in minutes
       efficiency: Math.floor(Math.random() * 15) + 80, // 80-95%
       consistency: Math.floor(Math.random() * 20) + 70,
+      respiratoryRate: 14 + Math.random() * 2,
+      lightSleep: Math.floor(Math.random() * 60) + 120,
+      deepSleep: Math.floor(Math.random() * 30) + 60,
+      remSleep: Math.floor(Math.random() * 30) + 60,
+      disturbances: Math.floor(Math.random() * 5),
     },
     lastUpdated: today.toISOString(),
+    hasData: false,
   }
 }
 
