@@ -198,26 +198,9 @@ export async function getWhoopProfile(
   return response.json()
 }
 
-// Fetch recovery data for a date range
-export async function getWhoopRecovery(
-  accessToken: string,
-  startDate?: Date,
-  endDate?: Date,
-  limit: number = 7
-): Promise<WhoopRecovery[]> {
-  const params = new URLSearchParams({
-    limit: String(limit),
-  })
-
-  if (startDate) {
-    params.append("start", startDate.toISOString())
-  }
-  if (endDate) {
-    params.append("end", endDate.toISOString())
-  }
-
-  const url = `${WHOOP_API_BASE}/recovery?${params.toString()}`
-  console.log("Fetching Whoop recovery from:", url)
+// Generic fetch helper with full response logging
+async function whoopFetch(url: string, accessToken: string, endpoint: string): Promise<any> {
+  console.log(`[Whoop ${endpoint}] Fetching: ${url}`)
   
   const response = await fetch(url, {
     headers: {
@@ -225,151 +208,95 @@ export async function getWhoopRecovery(
     },
   })
 
+  const responseText = await response.text()
+  console.log(`[Whoop ${endpoint}] Status: ${response.status}`)
+  console.log(`[Whoop ${endpoint}] Response: ${responseText.slice(0, 1000)}`)
+
   if (!response.ok) {
-    const errorText = await response.text()
-    console.error("Whoop recovery error:", response.status, errorText)
-    throw new Error(`Failed to fetch Whoop recovery: ${response.status} ${response.statusText}`)
+    throw new Error(`Whoop ${endpoint} failed: ${response.status} - ${responseText}`)
   }
 
-  const data = await response.json()
-  console.log("Whoop recovery RAW response:", JSON.stringify(data))
-  return data.records || data || []
+  try {
+    return JSON.parse(responseText)
+  } catch {
+    return responseText
+  }
 }
 
-// Fetch latest recovery score
-export async function getLatestRecovery(
-  accessToken: string
-): Promise<WhoopRecovery | null> {
-  const recoveries = await getWhoopRecovery(accessToken, undefined, undefined, 1)
-  console.log("Latest recovery parsed:", JSON.stringify(recoveries[0] || null))
-  return recoveries[0] || null
+// Fetch recovery data - NO date filtering to get most recent
+export async function getWhoopRecovery(
+  accessToken: string,
+  limit: number = 10
+): Promise<WhoopRecovery[]> {
+  const url = `${WHOOP_API_BASE}/recovery?limit=${limit}`
+  const data = await whoopFetch(url, accessToken, "Recovery")
+  return data.records || data || []
 }
 
 // Fetch cycle (strain) data
 export async function getWhoopCycles(
   accessToken: string,
-  startDate?: Date,
-  endDate?: Date,
-  limit: number = 7
+  limit: number = 10
 ): Promise<WhoopCycle[]> {
-  const params = new URLSearchParams({
-    limit: String(limit),
-  })
-
-  if (startDate) {
-    params.append("start", startDate.toISOString())
-  }
-  if (endDate) {
-    params.append("end", endDate.toISOString())
-  }
-
-  const url = `${WHOOP_API_BASE}/cycle?${params.toString()}`
-  console.log("Fetching Whoop cycles from:", url)
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error("Whoop cycles error:", response.status, errorText)
-    throw new Error(`Failed to fetch Whoop cycles: ${response.statusText}`)
-  }
-
-  const data = await response.json()
-  console.log("Whoop cycles RAW response:", JSON.stringify(data))
-  return data.records || []
+  const url = `${WHOOP_API_BASE}/cycle?limit=${limit}`
+  const data = await whoopFetch(url, accessToken, "Cycle")
+  return data.records || data || []
 }
 
-// Fetch sleep data
+// Fetch sleep data - NO date filtering to get most recent
 export async function getWhoopSleep(
   accessToken: string,
-  startDate?: Date,
-  endDate?: Date,
-  limit: number = 7
+  limit: number = 10
 ): Promise<WhoopSleep[]> {
-  const params = new URLSearchParams({
-    limit: String(limit),
-  })
-
-  if (startDate) {
-    params.append("start", startDate.toISOString())
-  }
-  if (endDate) {
-    params.append("end", endDate.toISOString())
-  }
-
-  const url = `${WHOOP_API_BASE}/activity/sleep?${params.toString()}`
-  console.log("Fetching Whoop sleep from:", url)
-
-  const response = await fetch(url, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-    },
-  })
-
-  if (!response.ok) {
-    const errorText = await response.text()
-    console.error("Whoop sleep error:", response.status, errorText)
-    throw new Error(`Failed to fetch Whoop sleep: ${response.statusText}`)
-  }
-
-  const data = await response.json()
-  console.log("Whoop sleep RAW response:", JSON.stringify(data))
-  return data.records || []
+  const url = `${WHOOP_API_BASE}/activity/sleep?limit=${limit}`
+  const data = await whoopFetch(url, accessToken, "Sleep")
+  return data.records || data || []
 }
 
-// Get all Whoop data for today
+// Get all Whoop data
 export async function getTodaysWhoopData(accessToken: string) {
-  // Try to fetch data, but handle 404s gracefully (no data yet)
-  let recoveryData = null
-  let cycleData: WhoopCycle[] = []
-  let sleepData: WhoopSleep[] = []
-
-  // Get date range for last 3 days to ensure we capture recent data
-  const endDate = new Date()
-  const startDate = new Date()
-  startDate.setDate(startDate.getDate() - 3)
+  let recoveryRecords: WhoopRecovery[] = []
+  let cycleRecords: WhoopCycle[] = []
+  let sleepRecords: WhoopSleep[] = []
+  let errors: string[] = []
 
   try {
-    // Fetch more records to find the most recent one
-    const recoveries = await getWhoopRecovery(accessToken, startDate, endDate, 5)
-    recoveryData = recoveries[0] || null
-    console.log(`Found ${recoveries.length} recovery records`)
+    recoveryRecords = await getWhoopRecovery(accessToken, 5)
+    console.log(`Found ${recoveryRecords.length} recovery records`)
   } catch (e: any) {
     console.log("Could not fetch recovery:", e.message)
+    errors.push(`Recovery: ${e.message}`)
   }
 
   try {
-    // Get latest cycle - don't filter by date since current cycle might not have end date
-    cycleData = await getWhoopCycles(accessToken, undefined, undefined, 1)
+    cycleRecords = await getWhoopCycles(accessToken, 3)
+    console.log(`Found ${cycleRecords.length} cycle records`)
   } catch (e: any) {
     console.log("Could not fetch cycles:", e.message)
+    errors.push(`Cycle: ${e.message}`)
   }
 
   try {
-    // Fetch recent sleep data
-    sleepData = await getWhoopSleep(accessToken, startDate, endDate, 5)
-    console.log(`Found ${sleepData.length} sleep records`)
+    sleepRecords = await getWhoopSleep(accessToken, 5)
+    console.log(`Found ${sleepRecords.length} sleep records`)
   } catch (e: any) {
     console.log("Could not fetch sleep:", e.message)
+    errors.push(`Sleep: ${e.message}`)
   }
 
-  // Extract the nested score objects
-  const recovery = recoveryData?.score
-  const cycle = cycleData[0]?.score
-  const sleep = sleepData[0]?.score
+  // Get the most recent data
+  const latestRecovery = recoveryRecords[0]
+  const latestCycle = cycleRecords[0]
+  const latestSleep = sleepRecords.find(s => !s.nap) || sleepRecords[0] // Prefer non-nap sleep
 
-  console.log("Extracted recovery score:", JSON.stringify(recovery))
-  console.log("Extracted cycle score:", JSON.stringify(cycle))
-  console.log("Extracted sleep score:", JSON.stringify(sleep))
+  const recovery = latestRecovery?.score
+  const cycle = latestCycle?.score
+  const sleep = latestSleep?.score
 
-  // HRV from Whoop is in milliseconds (hrv_rmssd_milli) - typically 20-100ms
-  // Resting HR is in bpm - typically 40-80
-  // Recovery score is 0-100
-  
+  console.log("Latest recovery record:", JSON.stringify(latestRecovery))
+  console.log("Latest cycle record:", JSON.stringify(latestCycle))
+  console.log("Latest sleep record:", JSON.stringify(latestSleep))
+
   const result = {
     recovery: {
       score: Math.round(recovery?.recovery_score ?? 0),
@@ -409,27 +336,30 @@ export async function getTodaysWhoopData(accessToken: string) {
     },
     lastUpdated: new Date().toISOString(),
     hasData: !!(recovery || cycle || sleep),
-    // Debug info
     _debug: {
       hasRecovery: !!recovery,
       hasCycle: !!cycle,
       hasSleep: !!sleep,
+      recoveryCount: recoveryRecords.length,
+      cycleCount: cycleRecords.length,
+      sleepCount: sleepRecords.length,
       rawRecoveryScore: recovery?.recovery_score ?? null,
       rawHrv: recovery?.hrv_rmssd_milli ?? null,
       rawRestingHR: recovery?.resting_heart_rate ?? null,
-      recoveryScoreState: recoveryData?.score_state ?? null,
-      sleepScoreState: sleepData[0]?.score_state ?? null,
+      recoveryScoreState: latestRecovery?.score_state ?? null,
+      sleepScoreState: latestSleep?.score_state ?? null,
+      errors: errors.length > 0 ? errors : null,
     }
   }
 
-  console.log("Final Whoop data result:", JSON.stringify(result))
+  console.log("Final result:", JSON.stringify(result))
   return result
 }
 
 // Get historical Whoop data (last 7 days)
 export async function getHistoricalWhoopData(accessToken: string, days: number = 7) {
   try {
-    const recoveries = await getWhoopRecovery(accessToken, undefined, undefined, days)
+    const recoveries = await getWhoopRecovery(accessToken, days)
 
     return recoveries.map((r) => ({
       date: r.created_at,
@@ -454,26 +384,26 @@ function generateState(): string {
 // Mock data for demo mode (when Whoop is not connected)
 export function getMockWhoopData() {
   const today = new Date()
-  const mockRecoveryScore = Math.floor(Math.random() * 40) + 50 // 50-90 range
+  const mockRecoveryScore = Math.floor(Math.random() * 40) + 50
 
   return {
     recovery: {
       score: mockRecoveryScore,
-      hrv: Math.floor(Math.random() * 30) + 40, // 40-70 ms
-      restingHR: Math.floor(Math.random() * 15) + 50, // 50-65 bpm
-      sleepPerformance: Math.floor(Math.random() * 20) + 70, // 70-90%
+      hrv: Math.floor(Math.random() * 30) + 40,
+      restingHR: Math.floor(Math.random() * 15) + 50,
+      sleepPerformance: Math.floor(Math.random() * 20) + 70,
       spo2: 98,
       skinTemp: null,
     },
     strain: {
-      dayStrain: Math.random() * 8 + 4, // 4-12
+      dayStrain: Math.random() * 8 + 4,
       calories: Math.floor(Math.random() * 500) + 2000,
       averageHR: Math.floor(Math.random() * 20) + 80,
       maxHR: Math.floor(Math.random() * 30) + 150,
     },
     sleep: {
-      duration: Math.floor(Math.random() * 120) + 360, // 6-8 hours in minutes
-      efficiency: Math.floor(Math.random() * 15) + 80, // 80-95%
+      duration: Math.floor(Math.random() * 120) + 360,
+      efficiency: Math.floor(Math.random() * 15) + 80,
       consistency: Math.floor(Math.random() * 20) + 70,
       respiratoryRate: 14 + Math.random() * 2,
       lightSleep: Math.floor(Math.random() * 60) + 120,
@@ -487,9 +417,15 @@ export function getMockWhoopData() {
       hasRecovery: false,
       hasCycle: false,
       hasSleep: false,
+      recoveryCount: 0,
+      cycleCount: 0,
+      sleepCount: 0,
       rawRecoveryScore: null,
       rawHrv: null,
       rawRestingHR: null,
+      recoveryScoreState: null,
+      sleepScoreState: null,
+      errors: null,
     }
   }
 }

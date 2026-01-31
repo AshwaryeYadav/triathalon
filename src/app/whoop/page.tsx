@@ -329,17 +329,24 @@ export default function WhoopPage() {
             <div className="text-xs text-blue-400/80 font-mono space-y-1">
               <div>Connected: {isConnected ? "Yes" : "No"}</div>
               <div>Demo Mode: {isDemo ? "Yes" : "No"}</div>
-              <div>Has Recovery Data: {response.data._debug.hasRecovery ? "Yes" : "No"}</div>
-              <div>Has Cycle Data: {response.data._debug.hasCycle ? "Yes" : "No"}</div>
-              <div>Has Sleep Data: {response.data._debug.hasSleep ? "Yes" : "No"}</div>
-              <div>Raw Recovery Score: {response.data._debug.rawRecoveryScore ?? "null"}</div>
-              <div>Raw HRV: {response.data._debug.rawHrv ?? "null"}</div>
-              <div>Raw Resting HR: {response.data._debug.rawRestingHR ?? "null"}</div>
+              <div className="mt-2 font-semibold">Records Found:</div>
+              <div>• Recovery Records: {(response.data._debug as any).recoveryCount ?? 0}</div>
+              <div>• Cycle Records: {(response.data._debug as any).cycleCount ?? 0}</div>
+              <div>• Sleep Records: {(response.data._debug as any).sleepCount ?? 0}</div>
+              <div className="mt-2 font-semibold">Parsed Values:</div>
+              <div>• Recovery Score: {response.data._debug.rawRecoveryScore ?? "null"}</div>
+              <div>• HRV (ms): {response.data._debug.rawHrv ?? "null"}</div>
+              <div>• Resting HR: {response.data._debug.rawRestingHR ?? "null"}</div>
               {(response.data._debug as any).recoveryScoreState && (
-                <div>Recovery State: {(response.data._debug as any).recoveryScoreState}</div>
+                <div>• Recovery State: {(response.data._debug as any).recoveryScoreState}</div>
               )}
               {(response.data._debug as any).sleepScoreState && (
-                <div>Sleep State: {(response.data._debug as any).sleepScoreState}</div>
+                <div>• Sleep State: {(response.data._debug as any).sleepScoreState}</div>
+              )}
+              {(response.data._debug as any).errors && (
+                <div className="mt-2 text-red-400">
+                  Errors: {(response.data._debug as any).errors.join(", ")}
+                </div>
               )}
             </div>
           </div>
