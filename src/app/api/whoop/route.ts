@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server"
-import { auth } from "@/lib/auth"
+import { cookies } from "next/headers"
 import {
   getMockWhoopData,
   getTodaysWhoopData,
@@ -7,17 +7,9 @@ import {
   refreshWhoopToken,
 } from "@/lib/whoop"
 
-// In-memory storage for demo (resets on redeploy)
-const whoopTokens = new Map<string, { accessToken: string; refreshToken: string }>()
-
 // GET /api/whoop - Get Whoop data
 export async function GET(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
     // Check if Whoop is configured
     if (!isWhoopConfigured()) {
       return NextResponse.json({
@@ -28,10 +20,12 @@ export async function GET(request: NextRequest) {
       })
     }
 
-    // Check if user has Whoop tokens (in-memory for demo)
-    const tokens = whoopTokens.get(session.user.id)
+    // Get tokens from cookies
+    const cookieStore = await cookies()
+    const accessToken = cookieStore.get("whoop_access_token")?.value
+    const refreshToken = cookieStore.get("whoop_refresh_token")?.value
 
-    if (!tokens?.accessToken) {
+    if (!accessToken) {
       return NextResponse.json({
         connected: false,
         demo: true,
@@ -42,7 +36,7 @@ export async function GET(request: NextRequest) {
 
     // Try to get real data
     try {
-      const data = await getTodaysWhoopData(tokens.accessToken)
+      const data = await getTodaysWhoopData(accessToken)
 
       return NextResponse.json({
         connected: true,
@@ -54,22 +48,35 @@ export async function GET(request: NextRequest) {
       console.error("Whoop API error:", apiError)
 
       // Try to refresh token
-      if (tokens.refreshToken) {
+      if (refreshToken) {
         try {
-          const newTokens = await refreshWhoopToken(tokens.refreshToken)
-          whoopTokens.set(session.user.id, {
-            accessToken: newTokens.accessToken,
-            refreshToken: newTokens.refreshToken,
-          })
+          const newTokens = await refreshWhoopToken(refreshToken)
 
-          // Retry with new token
-          const data = await getTodaysWhoopData(newTokens.accessToken)
-          return NextResponse.json({
+          // Update cookies with new tokens
+          const response = NextResponse.json({
             connected: true,
             demo: false,
-            data,
+            data: await getTodaysWhoopData(newTokens.accessToken),
             lastSync: new Date().toISOString(),
           })
+
+          response.cookies.set("whoop_access_token", newTokens.accessToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "lax",
+            maxAge: 60 * 60 * 24 * 30,
+            path: "/",
+          })
+
+          response.cookies.set("whoop_refresh_token", newTokens.refreshToken, {
+            httpOnly: true,
+            secure: true,
+            sameSite: "lax",
+            maxAge: 60 * 60 * 24 * 30,
+            path: "/",
+          })
+
+          return response
         } catch (refreshError) {
           console.error("Failed to refresh Whoop token:", refreshError)
         }
@@ -92,42 +99,16 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/whoop - Save Whoop tokens (called after OAuth)
-export async function POST(request: NextRequest) {
-  try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
-
-    const body = await request.json()
-    const { accessToken, refreshToken } = body
-
-    if (accessToken) {
-      whoopTokens.set(session.user.id, { accessToken, refreshToken })
-    }
-
-    return NextResponse.json({ success: true })
-  } catch (error) {
-    console.error("Error saving Whoop tokens:", error)
-    return NextResponse.json(
-      { error: "Failed to save tokens" },
-      { status: 500 }
-    )
-  }
-}
-
 // DELETE /api/whoop - Disconnect Whoop
 export async function DELETE(request: NextRequest) {
   try {
-    const session = await auth()
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 })
-    }
+    const response = NextResponse.json({ success: true, message: "Whoop disconnected" })
 
-    whoopTokens.delete(session.user.id)
+    // Clear the cookies
+    response.cookies.delete("whoop_access_token")
+    response.cookies.delete("whoop_refresh_token")
 
-    return NextResponse.json({ success: true, message: "Whoop disconnected" })
+    return response
   } catch (error) {
     console.error("Error disconnecting Whoop:", error)
     return NextResponse.json(
@@ -136,6 +117,3 @@ export async function DELETE(request: NextRequest) {
     )
   }
 }
-
-// Export tokens map for callback route
-export { whoopTokens }
