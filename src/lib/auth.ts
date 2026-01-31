@@ -3,10 +3,11 @@ import Google from "next-auth/providers/google"
 import Credentials from "next-auth/providers/credentials"
 
 export const { handlers, signIn, signOut, auth } = NextAuth({
+  debug: process.env.NODE_ENV === "development",
   providers: [
     Google({
-      clientId: process.env.GOOGLE_CLIENT_ID,
-      clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+      clientId: process.env.GOOGLE_CLIENT_ID!,
+      clientSecret: process.env.GOOGLE_CLIENT_SECRET!,
       authorization: {
         params: {
           scope: "openid email profile https://www.googleapis.com/auth/calendar",
@@ -21,11 +22,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         email: { label: "Email", type: "email" },
       },
       async authorize(credentials) {
-        // Demo mode - create a fake user without database
         const email = credentials?.email as string
         if (!email) return null
 
-        // Return a demo user object
         return {
           id: `demo-${email.replace(/[^a-zA-Z0-9]/g, "-")}`,
           email,
@@ -37,8 +36,9 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   ],
   session: {
     strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
+    maxAge: 30 * 24 * 60 * 60,
   },
+  secret: process.env.NEXTAUTH_SECRET || process.env.AUTH_SECRET,
   callbacks: {
     async jwt({ token, user, account }) {
       if (user) {
@@ -55,7 +55,6 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     async session({ session, token }) {
       if (session.user) {
         session.user.id = token.id as string
-        // Add google tokens to session for calendar API
         if (token.googleAccessToken) {
           (session as any).googleAccessToken = token.googleAccessToken
         }
@@ -65,6 +64,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
   },
   pages: {
     signIn: "/login",
+    error: "/login",
   },
   trustHost: true,
 })
