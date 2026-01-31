@@ -327,6 +327,7 @@ export default function WhoopPage() {
           <div className="mb-6 p-4 rounded-xl bg-blue-500/10 border border-blue-500/30">
             <p className="text-sm font-medium text-blue-400 mb-2">🔍 Debug Info</p>
             <div className="text-xs text-blue-400/80 font-mono space-y-1">
+              <div>API Version: {(response.data._debug as any).apiVersion ?? "v2"}</div>
               <div>Connected: {isConnected ? "Yes" : "No"}</div>
               <div>Demo Mode: {isDemo ? "Yes" : "No"}</div>
               <div className="mt-2 font-semibold">Records Found:</div>

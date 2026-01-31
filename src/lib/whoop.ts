@@ -1,8 +1,9 @@
 // Whoop API Integration
-// Documentation: https://developer.whoop.com/
+// Documentation: https://developer.whoop.com/docs/developing/user-data/cycle
+// Using API v2 (v1 has been deprecated)
 
-// Whoop API endpoints (v1)
-const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v1"
+// Whoop API endpoints - Using v2
+const WHOOP_API_BASE = "https://api.prod.whoop.com/developer/v2"
 const WHOOP_AUTH_URL = "https://api.prod.whoop.com/oauth/oauth2/auth"
 const WHOOP_TOKEN_URL = "https://api.prod.whoop.com/oauth/oauth2/token"
 
@@ -12,13 +13,14 @@ export interface WhoopTokens {
   expiresAt: number
 }
 
+// v2 Recovery data model
 export interface WhoopRecovery {
   cycle_id: number
   sleep_id: number
   user_id: number
   created_at: string
   updated_at: string
-  score_state: string
+  score_state: "SCORED" | "PENDING_SCORE" | "UNSCORABLE"
   score: {
     user_calibrating: boolean
     recovery_score: number
@@ -26,9 +28,10 @@ export interface WhoopRecovery {
     hrv_rmssd_milli: number
     spo2_percentage: number | null
     skin_temp_celsius: number | null
-  }
+  } | null
 }
 
+// v2 Cycle data model (from docs)
 export interface WhoopCycle {
   id: number
   user_id: number
@@ -37,7 +40,7 @@ export interface WhoopCycle {
   start: string
   end: string | null
   timezone_offset: string
-  score_state: string
+  score_state: "SCORED" | "PENDING_SCORE" | "UNSCORABLE"
   score: {
     strain: number
     kilojoule: number
@@ -46,6 +49,7 @@ export interface WhoopCycle {
   } | null
 }
 
+// v2 Sleep data model
 export interface WhoopSleep {
   id: number
   user_id: number
@@ -55,7 +59,7 @@ export interface WhoopSleep {
   end: string
   timezone_offset: string
   nap: boolean
-  score_state: string
+  score_state: "SCORED" | "PENDING_SCORE" | "UNSCORABLE"
   score: {
     stage_summary: {
       total_in_bed_time_milli: number
@@ -213,7 +217,7 @@ async function whoopFetch(url: string, accessToken: string, endpoint: string): P
   console.log(`[Whoop ${endpoint}] Response: ${responseText.slice(0, 1000)}`)
 
   if (!response.ok) {
-    throw new Error(`Whoop ${endpoint} failed: ${response.status} - ${responseText}`)
+    throw new Error(`Whoop ${endpoint} failed: ${response.status} - ${responseText.slice(0, 200)}`)
   }
 
   try {
@@ -223,7 +227,8 @@ async function whoopFetch(url: string, accessToken: string, endpoint: string): P
   }
 }
 
-// Fetch recovery data - NO date filtering to get most recent
+// v2 API: Fetch recovery data
+// Endpoint: GET /v2/recovery
 export async function getWhoopRecovery(
   accessToken: string,
   limit: number = 10
@@ -233,7 +238,8 @@ export async function getWhoopRecovery(
   return data.records || data || []
 }
 
-// Fetch cycle (strain) data
+// v2 API: Fetch cycle (strain) data  
+// Endpoint: GET /v2/cycle
 export async function getWhoopCycles(
   accessToken: string,
   limit: number = 10
@@ -243,7 +249,8 @@ export async function getWhoopCycles(
   return data.records || data || []
 }
 
-// Fetch sleep data - NO date filtering to get most recent
+// v2 API: Fetch sleep data
+// Endpoint: GET /v2/activity/sleep
 export async function getWhoopSleep(
   accessToken: string,
   limit: number = 10
@@ -284,10 +291,10 @@ export async function getTodaysWhoopData(accessToken: string) {
     errors.push(`Sleep: ${e.message}`)
   }
 
-  // Get the most recent data
-  const latestRecovery = recoveryRecords[0]
-  const latestCycle = cycleRecords[0]
-  const latestSleep = sleepRecords.find(s => !s.nap) || sleepRecords[0] // Prefer non-nap sleep
+  // Get the most recent SCORED data
+  const latestRecovery = recoveryRecords.find(r => r.score_state === "SCORED") || recoveryRecords[0]
+  const latestCycle = cycleRecords.find(c => c.score_state === "SCORED") || cycleRecords[0]
+  const latestSleep = sleepRecords.find(s => s.score_state === "SCORED" && !s.nap) || sleepRecords[0]
 
   const recovery = latestRecovery?.score
   const cycle = latestCycle?.score
@@ -337,6 +344,7 @@ export async function getTodaysWhoopData(accessToken: string) {
     lastUpdated: new Date().toISOString(),
     hasData: !!(recovery || cycle || sleep),
     _debug: {
+      apiVersion: "v2",
       hasRecovery: !!recovery,
       hasCycle: !!cycle,
       hasSleep: !!sleep,
@@ -361,14 +369,16 @@ export async function getHistoricalWhoopData(accessToken: string, days: number =
   try {
     const recoveries = await getWhoopRecovery(accessToken, days)
 
-    return recoveries.map((r) => ({
-      date: r.created_at,
-      recovery: {
-        score: Math.round(r.score?.recovery_score ?? 0),
-        hrv: Math.round(r.score?.hrv_rmssd_milli ?? 0),
-        restingHR: Math.round(r.score?.resting_heart_rate ?? 0),
-      },
-    }))
+    return recoveries
+      .filter(r => r.score_state === "SCORED")
+      .map((r) => ({
+        date: r.created_at,
+        recovery: {
+          score: Math.round(r.score?.recovery_score ?? 0),
+          hrv: Math.round(r.score?.hrv_rmssd_milli ?? 0),
+          restingHR: Math.round(r.score?.resting_heart_rate ?? 0),
+        },
+      }))
   } catch (error) {
     console.error("Error fetching historical Whoop data:", error)
     throw error
@@ -414,6 +424,7 @@ export function getMockWhoopData() {
     lastUpdated: today.toISOString(),
     hasData: false,
     _debug: {
+      apiVersion: "v2 (demo)",
       hasRecovery: false,
       hasCycle: false,
       hasSleep: false,
