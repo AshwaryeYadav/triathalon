@@ -317,11 +317,28 @@ export async function getWhoopSleep(
 // Get all Whoop data for today
 export async function getTodaysWhoopData(accessToken: string) {
   try {
-    const [recoveryData, cycleData, sleepData] = await Promise.all([
-      getLatestRecovery(accessToken),
-      getWhoopCycles(accessToken, undefined, undefined, 1),
-      getWhoopSleep(accessToken, undefined, undefined, 1),
-    ])
+    // Try to fetch data, but handle 404s gracefully (no data yet)
+    let recoveryData = null
+    let cycleData: WhoopCycle[] = []
+    let sleepData: WhoopSleep[] = []
+
+    try {
+      recoveryData = await getLatestRecovery(accessToken)
+    } catch (e: any) {
+      console.log("Could not fetch recovery:", e.message)
+    }
+
+    try {
+      cycleData = await getWhoopCycles(accessToken, undefined, undefined, 1)
+    } catch (e: any) {
+      console.log("Could not fetch cycles:", e.message)
+    }
+
+    try {
+      sleepData = await getWhoopSleep(accessToken, undefined, undefined, 1)
+    } catch (e: any) {
+      console.log("Could not fetch sleep:", e.message)
+    }
 
     const recovery = recoveryData?.score
     const cycle = cycleData[0]?.score
