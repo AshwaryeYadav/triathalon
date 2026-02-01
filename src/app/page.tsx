@@ -14,6 +14,9 @@ import {
   Plus,
   AlertTriangle,
   CheckCircle,
+  Activity,
+  Timer,
+  Flame,
 } from "lucide-react"
 import {
   RecoveryRing,
@@ -32,7 +35,43 @@ import {
   getScheduleByPhase,
   getRecoveryAdjustment,
   type WorkoutTemplate,
+  type WorkoutType,
 } from "@/lib/training-plan"
+
+// Detected workout from Whoop API sync
+interface DetectedWorkout {
+  id: string
+  sport: string
+  type: WorkoutType | null
+  strain: number
+  duration: number
+}
+
+interface WorkoutSyncData {
+  success: boolean
+  summary?: {
+    completedCount: number
+    totalPlanned: number
+    extraWorkouts: number
+    totalStrain: string
+    recoveryScore: number
+  }
+  detectedWorkouts: DetectedWorkout[]
+  matches: Array<{
+    detected: DetectedWorkout
+    planned: { title: string; type: string; duration: number } | null
+    matchScore: number
+    isExtra: boolean
+  }>
+  tomorrowAdjustments: Array<{
+    title: string
+    type: string
+    originalDuration: number
+    newDuration: number
+    adjustment: string
+    skip: boolean
+  }>
+}
 
 interface WhoopData {
   recovery: {
@@ -74,6 +113,8 @@ export default function Dashboard() {
   const [showLogWorkout, setShowLogWorkout] = useState(false)
   const [loggedWorkouts, setLoggedWorkouts] = useState<LoggedWorkout[]>([])
   const [lastLoggedWorkout, setLastLoggedWorkout] = useState<LoggedWorkout | null>(null)
+  const [workoutSync, setWorkoutSync] = useState<WorkoutSyncData | null>(null)
+  const [isSyncingWorkouts, setIsSyncingWorkouts] = useState(false)
 
   // Calculate current week (from Jan 30, 2026 to April 11, 2026 = ~10 weeks)
   const raceDate = new Date("2026-04-11")
@@ -115,12 +156,47 @@ export default function Dashboard() {
     }
   }, [])
 
+  // Fetch workout sync (detected workouts from Whoop)
+  const fetchWorkoutSync = useCallback(async () => {
+    setIsSyncingWorkouts(true)
+    try {
+      const res = await fetch("/api/workouts/sync", { cache: "no-store" })
+      const data = await res.json()
+      
+      console.log("Workout sync data:", data)
+      setWorkoutSync(data)
+
+      // Auto-mark detected workouts as completed
+      if (data.success && data.matches) {
+        const matchedTitles = data.matches
+          .filter((m: { matchScore: number; planned: { title: string } | null }) => m.matchScore >= 40 && m.planned)
+          .map((m: { planned: { title: string } }) => m.planned.title)
+        
+        if (matchedTitles.length > 0) {
+          setCompletedWorkouts(prev => {
+            const newSet = new Set([...prev, ...matchedTitles])
+            localStorage.setItem("completedWorkouts", JSON.stringify([...newSet]))
+            return newSet
+          })
+        }
+      }
+    } catch (error) {
+      console.error("Failed to sync workouts:", error)
+    } finally {
+      setIsSyncingWorkouts(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchWhoopData()
+    fetchWorkoutSync()
     // Refresh every 5 minutes
-    const interval = setInterval(fetchWhoopData, 5 * 60 * 1000)
+    const interval = setInterval(() => {
+      fetchWhoopData()
+      fetchWorkoutSync()
+    }, 5 * 60 * 1000)
     return () => clearInterval(interval)
-  }, [fetchWhoopData])
+  }, [fetchWhoopData, fetchWorkoutSync])
 
   // Load logged workouts from localStorage
   useEffect(() => {
@@ -156,8 +232,11 @@ export default function Dashboard() {
   const refreshWhoopData = async () => {
     setIsRefreshing(true)
     try {
-      const res = await fetch("/api/whoop", { cache: "no-store" })
-      const data = await res.json()
+      const [whoopRes] = await Promise.all([
+        fetch("/api/whoop", { cache: "no-store" }),
+        fetchWorkoutSync(),
+      ])
+      const data = await whoopRes.json()
 
       if (data.data) {
         setWhoopData(data.data)
@@ -406,6 +485,123 @@ export default function Dashboard() {
                   </div>
                 </div>
               </motion.div>
+
+              {/* Detected Whoop Workouts */}
+              {workoutSync?.success && workoutSync.detectedWorkouts.length > 0 && (
+                <motion.div
+                  className="glass-card p-6"
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.15 }}
+                >
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <Activity className="w-5 h-5 text-[var(--swim-blue)]" />
+                      <h3 className="font-semibold text-white">Detected from Whoop</h3>
+                    </div>
+                    <button
+                      onClick={fetchWorkoutSync}
+                      disabled={isSyncingWorkouts}
+                      className="text-xs text-[var(--text-muted)] hover:text-white flex items-center gap-1"
+                    >
+                      <RefreshCw className={`w-3 h-3 ${isSyncingWorkouts ? "animate-spin" : ""}`} />
+                      Refresh
+                    </button>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {workoutSync.detectedWorkouts.map((workout) => {
+                      const match = workoutSync.matches.find(m => m.detected.id === workout.id)
+                      const typeEmoji = {
+                        swim: "🏊",
+                        bike: "🚴",
+                        run: "🏃",
+                        lift_upper: "🏋️",
+                        lift_lower: "🦵",
+                        brick: "🔥",
+                        mobility: "🧘",
+                        rest: "😴",
+                      }[workout.type || ""] || "💪"
+                      
+                      return (
+                        <div
+                          key={workout.id}
+                          className="p-4 rounded-xl bg-[var(--bg-tertiary)] border border-[var(--border-subtle)]"
+                        >
+                          <div className="flex items-start justify-between">
+                            <div className="flex items-center gap-3">
+                              <div className="text-2xl">{typeEmoji}</div>
+                              <div>
+                                <div className="font-medium text-white capitalize">
+                                  {workout.sport.replace(/_/g, " ")}
+                                </div>
+                                <div className="flex items-center gap-3 text-xs text-[var(--text-muted)] mt-1">
+                                  <span className="flex items-center gap-1">
+                                    <Timer className="w-3 h-3" />
+                                    {workout.duration} min
+                                  </span>
+                                  <span className="flex items-center gap-1">
+                                    <Flame className="w-3 h-3 text-orange-400" />
+                                    {workout.strain.toFixed(1)} strain
+                                  </span>
+                                </div>
+                              </div>
+                            </div>
+                            
+                            {match?.planned ? (
+                              <div className="flex items-center gap-1 px-2 py-1 rounded-full bg-green-500/20 text-green-400 text-xs">
+                                <CheckCircle className="w-3 h-3" />
+                                Matched: {match.planned.title}
+                              </div>
+                            ) : (
+                              <div className="px-2 py-1 rounded-full bg-blue-500/20 text-blue-400 text-xs">
+                                + Extra workout
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+
+                  {/* Tomorrow's Adjustments */}
+                  {workoutSync.tomorrowAdjustments.length > 0 && (
+                    <div className="mt-4 pt-4 border-t border-[var(--border-subtle)]">
+                      <p className="text-sm text-[var(--text-muted)] mb-3">
+                        Tomorrow&apos;s plan adjusted based on today&apos;s activity:
+                      </p>
+                      <div className="space-y-2">
+                        {workoutSync.tomorrowAdjustments.map((adj, i) => (
+                          <div
+                            key={i}
+                            className={`p-3 rounded-lg text-sm ${
+                              adj.skip
+                                ? "bg-red-500/10 text-red-400"
+                                : adj.newDuration < adj.originalDuration
+                                ? "bg-yellow-500/10 text-yellow-400"
+                                : "bg-green-500/10 text-green-400"
+                            }`}
+                          >
+                            <span className="font-medium">{adj.title}:</span>{" "}
+                            {adj.skip ? (
+                              "Skip recommended"
+                            ) : adj.newDuration !== adj.originalDuration ? (
+                              <>
+                                {adj.originalDuration} → {adj.newDuration} min
+                              </>
+                            ) : (
+                              "No change"
+                            )}
+                            {adj.adjustment !== "No adjustment needed" && (
+                              <span className="text-xs opacity-70 ml-2">({adj.adjustment})</span>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </motion.div>
+              )}
 
               {/* Log Workout Button */}
               <motion.div

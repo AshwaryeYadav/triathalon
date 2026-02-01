@@ -529,3 +529,312 @@ export function getRecoveryAdjustment(recoveryScore: number): RecoveryAdjustment
     adj => recoveryScore >= adj.recoveryRange[0] && recoveryScore <= adj.recoveryRange[1]
   ) || recoveryAdjustments[2]
 }
+
+// ============================================
+// WHOOP WORKOUT DETECTION & AUTO-ADJUSTMENT
+// ============================================
+
+// Map Whoop sport names to our workout types
+export const whoopSportToWorkoutType: Record<string, WorkoutType> = {
+  // Swimming
+  "swimming": "swim",
+  "diving": "swim",
+  "water_polo": "swim",
+  
+  // Biking
+  "cycling": "bike",
+  "spinning": "bike",
+  "spin": "bike",
+  "mountain_biking": "bike",
+  "assault_bike": "bike",
+  
+  // Running
+  "running": "run",
+  "track_&_field": "run",
+  "hiking/rucking": "run",
+  "walking": "run",
+  "stairmaster": "run",
+  "elliptical": "run",
+  
+  // Strength/Lifting
+  "weightlifting": "lift_lower", // Could be either
+  "functional_fitness": "lift_lower",
+  "powerlifting": "lift_lower",
+  "crossfit": "lift_upper",
+  "hiit": "lift_upper",
+  "box_fitness": "lift_upper",
+  "barre": "lift_upper",
+  "pilates": "lift_upper",
+  
+  // Triathlon/Brick
+  "triathlon": "brick",
+  "duathlon": "brick",
+  
+  // Mobility/Recovery
+  "yoga": "mobility",
+  "stretching": "mobility",
+  "meditation": "mobility",
+  "massage_therapy": "mobility",
+  "sauna": "mobility",
+  "ice_bath": "mobility",
+  "air_compression": "mobility",
+  "percussive_massage": "mobility",
+}
+
+// Detected workout from Whoop
+export interface DetectedWorkout {
+  id: string
+  sport: string
+  matchedType: WorkoutType | null
+  strain: number
+  duration: number // minutes
+  calories: number
+  averageHR: number
+  maxHR: number
+  distance: number | null
+  start: string
+  end: string
+}
+
+// Match a Whoop workout to a planned workout
+export interface WorkoutMatch {
+  detected: DetectedWorkout
+  planned: WorkoutTemplate | null
+  matchScore: number // 0-100 how well it matches
+  isExtraWorkout: boolean // Did more than planned
+  adjustmentNeeded: WorkoutAdjustment | null
+}
+
+// Adjustment for next workout based on what was done
+export interface WorkoutAdjustment {
+  reason: string
+  durationChange: number // percentage (-20 means reduce 20%)
+  intensityChange: number // percentage
+  recommendation: string
+  skipNextIfHard: boolean
+}
+
+// Detect workout type from Whoop sport name
+export function detectWorkoutType(sportName: string): WorkoutType | null {
+  const normalizedSport = sportName.toLowerCase().replace(/_/g, " ").trim()
+  
+  // Direct match
+  if (whoopSportToWorkoutType[normalizedSport]) {
+    return whoopSportToWorkoutType[normalizedSport]
+  }
+  
+  // Fuzzy matching
+  for (const [sport, type] of Object.entries(whoopSportToWorkoutType)) {
+    if (normalizedSport.includes(sport.replace(/_/g, " ")) || 
+        sport.replace(/_/g, " ").includes(normalizedSport)) {
+      return type
+    }
+  }
+  
+  // Check for keywords
+  if (normalizedSport.includes("swim")) return "swim"
+  if (normalizedSport.includes("bike") || normalizedSport.includes("cycling")) return "bike"
+  if (normalizedSport.includes("run") || normalizedSport.includes("jog")) return "run"
+  if (normalizedSport.includes("lift") || normalizedSport.includes("weight") || normalizedSport.includes("strength")) return "lift_lower"
+  if (normalizedSport.includes("yoga") || normalizedSport.includes("stretch") || normalizedSport.includes("mobility")) return "mobility"
+  
+  return null
+}
+
+// Calculate how well a detected workout matches a planned workout
+export function calculateMatchScore(detected: DetectedWorkout, planned: WorkoutTemplate): number {
+  let score = 0
+  
+  // Type match (most important)
+  if (detected.matchedType === planned.type) {
+    score += 50
+  } else if (
+    // Close matches
+    (detected.matchedType === "lift_upper" && planned.type === "lift_lower") ||
+    (detected.matchedType === "lift_lower" && planned.type === "lift_upper")
+  ) {
+    score += 30
+  }
+  
+  // Duration match (within 20% = good)
+  const durationRatio = detected.duration / planned.duration
+  if (durationRatio >= 0.8 && durationRatio <= 1.2) {
+    score += 30
+  } else if (durationRatio >= 0.5 && durationRatio <= 1.5) {
+    score += 15
+  }
+  
+  // Intensity match based on strain
+  const strainToIntensity = detected.strain < 8 ? "easy" : detected.strain < 14 ? "moderate" : "hard"
+  if (strainToIntensity === planned.intensity) {
+    score += 20
+  } else if (
+    (strainToIntensity === "moderate" && planned.intensity === "easy") ||
+    (strainToIntensity === "moderate" && planned.intensity === "hard")
+  ) {
+    score += 10
+  }
+  
+  return Math.min(score, 100)
+}
+
+// Calculate adjustment for next workout based on what was done
+export function calculateWorkoutAdjustment(
+  detected: DetectedWorkout,
+  planned: WorkoutTemplate | null,
+  recoveryScore: number
+): WorkoutAdjustment | null {
+  // If workout was much harder than planned
+  if (detected.strain > 15) {
+    return {
+      reason: `High strain workout (${detected.strain.toFixed(1)})`,
+      durationChange: -20,
+      intensityChange: -20,
+      recommendation: "Reduce next similar workout - you pushed hard today",
+      skipNextIfHard: true,
+    }
+  }
+  
+  // If did more duration than planned
+  if (planned && detected.duration > planned.duration * 1.3) {
+    return {
+      reason: `Exceeded planned duration by ${Math.round(((detected.duration / planned.duration) - 1) * 100)}%`,
+      durationChange: -15,
+      intensityChange: 0,
+      recommendation: "Good effort! Slightly reduce tomorrow to recover",
+      skipNextIfHard: false,
+    }
+  }
+  
+  // If recovery is low but still trained
+  if (recoveryScore < 40 && detected.strain > 10) {
+    return {
+      reason: "Trained on low recovery",
+      durationChange: -25,
+      intensityChange: -30,
+      recommendation: "⚠️ You trained hard on low recovery. Consider rest tomorrow.",
+      skipNextIfHard: true,
+    }
+  }
+  
+  // If did an extra unplanned workout
+  if (!planned && detected.strain > 8) {
+    return {
+      reason: "Extra unplanned workout",
+      durationChange: -10,
+      intensityChange: -10,
+      recommendation: "Nice extra work! Adjust tomorrow's plan slightly",
+      skipNextIfHard: false,
+    }
+  }
+  
+  return null
+}
+
+// Match detected workouts to today's planned workouts
+export function matchWorkoutsForDay(
+  detectedWorkouts: DetectedWorkout[],
+  plannedWorkouts: WorkoutTemplate[],
+  recoveryScore: number
+): WorkoutMatch[] {
+  const matches: WorkoutMatch[] = []
+  const usedPlanned = new Set<number>()
+  
+  for (const detected of detectedWorkouts) {
+    let bestMatch: WorkoutTemplate | null = null
+    let bestScore = 0
+    let bestIndex = -1
+    
+    // Find best matching planned workout
+    for (let i = 0; i < plannedWorkouts.length; i++) {
+      if (usedPlanned.has(i)) continue
+      
+      const score = calculateMatchScore(detected, plannedWorkouts[i])
+      if (score > bestScore) {
+        bestScore = score
+        bestMatch = plannedWorkouts[i]
+        bestIndex = i
+      }
+    }
+    
+    // Only consider it a match if score is reasonable
+    if (bestScore >= 40 && bestIndex >= 0) {
+      usedPlanned.add(bestIndex)
+    } else {
+      bestMatch = null
+      bestScore = 0
+    }
+    
+    const adjustment = calculateWorkoutAdjustment(detected, bestMatch, recoveryScore)
+    
+    matches.push({
+      detected,
+      planned: bestMatch,
+      matchScore: bestScore,
+      isExtraWorkout: !bestMatch,
+      adjustmentNeeded: adjustment,
+    })
+  }
+  
+  return matches
+}
+
+// Get recommended adjustments for tomorrow's workout
+export function getNextWorkoutAdjustments(
+  todayMatches: WorkoutMatch[],
+  recoveryScore: number,
+  tomorrowWorkouts: WorkoutTemplate[]
+): { workout: WorkoutTemplate; adjustment: string; newDuration: number; skip: boolean }[] {
+  // Calculate overall strain from today
+  const totalStrain = todayMatches.reduce((sum, m) => sum + m.detected.strain, 0)
+  const hasHardWorkout = todayMatches.some(m => m.detected.strain > 14)
+  const trainedOnLowRecovery = recoveryScore < 40 && totalStrain > 8
+  
+  return tomorrowWorkouts.map(workout => {
+    let durationMod = 1.0
+    let skipWorkout = false
+    let adjustmentReason = ""
+    
+    // High strain today
+    if (totalStrain > 18) {
+      durationMod *= 0.75
+      adjustmentReason = "Reduced due to high strain yesterday"
+      if (workout.intensity === "hard") {
+        skipWorkout = true
+        adjustmentReason = "Skip - need recovery after high strain"
+      }
+    } else if (totalStrain > 12) {
+      durationMod *= 0.9
+      adjustmentReason = "Slightly reduced after good training day"
+    }
+    
+    // Trained on low recovery
+    if (trainedOnLowRecovery) {
+      durationMod *= 0.7
+      skipWorkout = workout.intensity === "hard"
+      adjustmentReason = skipWorkout 
+        ? "Skip - trained on low recovery yesterday" 
+        : "Significantly reduced - recovery priority"
+    }
+    
+    // Apply individual workout adjustments
+    for (const match of todayMatches) {
+      if (match.adjustmentNeeded) {
+        if (match.detected.matchedType === workout.type) {
+          durationMod *= (100 + match.adjustmentNeeded.durationChange) / 100
+          if (match.adjustmentNeeded.skipNextIfHard && workout.intensity === "hard") {
+            skipWorkout = true
+            adjustmentReason = match.adjustmentNeeded.recommendation
+          }
+        }
+      }
+    }
+    
+    return {
+      workout,
+      adjustment: adjustmentReason || "No adjustment needed",
+      newDuration: Math.round(workout.duration * durationMod),
+      skip: skipWorkout,
+    }
+  })
+}
