@@ -512,7 +512,7 @@ export default function Dashboard() {
                   <div className="space-y-3">
                     {workoutSync.detectedWorkouts.map((workout) => {
                       const match = workoutSync.matches.find(m => m.detected.id === workout.id)
-                      const typeEmoji = {
+                      const emojiMap: Record<string, string> = {
                         swim: "🏊",
                         bike: "🚴",
                         run: "🏃",
@@ -521,7 +521,8 @@ export default function Dashboard() {
                         brick: "🔥",
                         mobility: "🧘",
                         rest: "😴",
-                      }[workout.type || ""] || "💪"
+                      }
+                      const typeEmoji = (workout.type && emojiMap[workout.type]) || "💪"
                       
                       return (
                         <div
